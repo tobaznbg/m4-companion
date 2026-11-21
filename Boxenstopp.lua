@@ -4,7 +4,8 @@
 -- paths, loading screens, full scans), a snack and a "second wave" in long sessions, plus tips.
 -- Only with the switch "Min-Max-Optimierung" (ns.db.settings.minMax, Einstellungen); off, the tab
 -- is not there. Inputs in ns.db.boxenstopp (the start time is not kept: auto = next quarter hour).
--- Satire with a grain of real medicine, not medical advice.
+-- Satire with a grain of real medicine, not medical advice. Dedicated to Nspi, the king of the
+-- min-maxers.
 local ADDON, ns = ...
 
 local B = {}
@@ -324,6 +325,12 @@ function B.Build(page, w)
     showTip()
   end)
   nextTip:SetPoint("BOTTOMLEFT", 20, 62)
+  -- the dedication: a crown (the group leader's) and the king of the min-maxers
+  local dedication = left:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  dedication:SetPoint("BOTTOMLEFT", 22, 94)
+  dedication:SetWidth(246)
+  dedication:SetJustifyH("LEFT")
+  dedication:SetText("|TInterface\\GroupFrame\\UI-Group-LeaderIcon:14:14|t  Gewidmet |cffff8000Nspi|r, dem König der Min-Maxer")
   counter:SetPoint("LEFT", nextTip, "RIGHT", 12, 0)
   local disclaimer = left:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   disclaimer:SetPoint("BOTTOMLEFT", 22, 18)
