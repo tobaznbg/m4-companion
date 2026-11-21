@@ -1821,6 +1821,27 @@ PAGES.settings = function(p)
   local plus = Style.Button(p, "+", 24, 20, function() changeScale(0.05) end)
   plus:SetPoint("LEFT", scaleLabel, "RIGHT", 10, 0)
 
+  -- Right column (the left one is full): Min-Max-Optimierung unlocks Dr. Porzellan's toilet
+  -- break planner in the ledger, the tab under "Marktsuche" (Boxenstopp.lua).
+  local rx, ry = PAD + 470, -(PAD + TOOLBAR + 10)
+  local extra = Style.Text(p, 12)
+  extra:SetPoint("TOPLEFT", rx, ry)
+  extra:SetText(Style.HEAD .. "Experimentell|r")
+  local minMax = toggle(p, "Min-Max-Optimierung", function() return settings().minMax == true end,
+    function(on)
+      settings().minMax = on
+      if ns.TradeBook and ns.TradeBook.UpdateTabs then ns.TradeBook.UpdateTabs() end
+    end)
+  minMax:SetPoint("TOPLEFT", rx + 4, ry - 24)
+  table.insert(toggles, minMax)
+  local minMaxHint = Style.Text(p, 11)
+  minMaxHint:SetPoint("TOPLEFT", rx + 28, ry - 50)
+  minMaxHint:SetWidth(380)
+  minMaxHint:SetJustifyH("LEFT")
+  minMaxHint:SetText(Style.MUTED .. "Schaltet im Handelsbuch unter der Marktsuche den Boxenstopp-Planer\n"
+    .. "von Dr. med. Porzellan frei: Klo-Pausen medizinisch (halbwegs) optimal\n"
+    .. "um die Zocksession planen. Auch mit /m4 klo.|r")
+
   function p:Refresh()
     for _, t in ipairs(toggles) do t:Update() end
     local d = discord()

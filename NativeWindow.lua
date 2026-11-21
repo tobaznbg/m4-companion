@@ -124,11 +124,33 @@ function NW:AddTab(def)
   end
   self.tabs[def.key] = { def = def, button = t }
   self.order[i] = def.key
+  if def.visible then self:UpdateTabs() end
+end
+
+-- def.visible = function: the tab shows only while it returns true. UpdateTabs shows and hides
+-- those tabs and closes the side tabs up; a hidden current tab falls back to the first one.
+local function tabShown(tab) return not tab.def.visible or (tab.def.visible() and true or false) end
+
+function NW:UpdateTabs()
+  local n = 0
+  for _, key in ipairs(self.order) do
+    local tab = self.tabs[key]
+    local shown = tabShown(tab)
+    n = n + 1
+    if tab.button then
+      tab.button:ClearAllPoints()
+      tab.button:SetPoint("TOPLEFT", self.frame, "TOPRIGHT", -2, -40 - (n - 1) * 60)
+      tab.button:SetShown(shown)
+    end
+    if not shown then n = n - 1 end
+  end
+  local cur = self.current and self.tabs[self.current]
+  if cur and not tabShown(cur) and self.order[1] then self:SelectTab(self.order[1]) end
 end
 
 function NW:SelectTab(key)
   local tab = self.tabs[key]
-  if not tab then return end
+  if not tab or not tabShown(tab) then return end
   for k, other in pairs(self.tabs) do
     if other.page then other.page:SetShown(k == key) end
     local sel = other.button and rawget(other.button, "SelectedTexture")

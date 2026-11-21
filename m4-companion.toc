@@ -43,6 +43,7 @@ Sync.lua
 Profit.lua
 SellInfo.lua
 NativeWindow.lua
+Boxenstopp.lua
 TradeBook.lua
 AHTable.lua
 Invest.lua

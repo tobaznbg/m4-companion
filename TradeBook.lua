@@ -1311,7 +1311,7 @@ local function buildChoices(w)
 end
 
 local function showChoices(key)
-  local withChar, withPeriod = key ~= "gold" and key ~= "search", key == "overview" or key == "ledger"
+  local withChar, withPeriod = key ~= "gold" and key ~= "search" and key ~= "boxenstopp", key == "overview" or key == "ledger"
   choices.char:SetShown(withChar); choices.charLabel:SetShown(withChar)
   choices.period:SetShown(withPeriod); choices.periodLabel:SetShown(withPeriod)
   for _, d in pairs(choices) do if d.Update then d.Update() end end
@@ -1341,6 +1341,11 @@ local function create()
     build = buildGold, onShow = onTab("gold") })
   window:AddTab({ key = "search", title = "Marktsuche", icon = SEARCH_TAB_ICON, overview = true,
     build = buildSearch, onShow = onTab("search") })
+  -- under the search: Dr. Porzellan's toilet break planner, only with "Min-Max-Optimierung" (Boxenstopp.lua)
+  if ns.Boxenstopp then
+    window:AddTab({ key = "boxenstopp", title = "Boxenstopp-Planer", icon = ns.Boxenstopp.ICON, overview = true,
+      visible = ns.Boxenstopp.Enabled, build = ns.Boxenstopp.Build, onShow = onTab("boxenstopp") })
+  end
 end
 
 -- Right click on a trade / own use item: own use by hand, back to trade, or the automatic rule
@@ -1376,8 +1381,22 @@ function TradeBook.Show()
     if ok and n then c.fullName = n end
   end
   if not window then create() end
+  window:UpdateTabs() -- the settings sync may have switched the planner since
   window:Show()
   window:SelectTab("overview")
+end
+
+-- The switch "Min-Max-Optimierung" changed: the planner's tab follows.
+function TradeBook.UpdateTabs()
+  if window then window:UpdateTabs() end
+end
+
+-- The ledger on the toilet break planner (when switched on).
+function TradeBook.ShowBoxenstopp()
+  if not (ns.Boxenstopp and ns.Boxenstopp.Enabled()) then return false end
+  TradeBook.Show()
+  window:SelectTab("boxenstopp")
+  return true
 end
 
 -- The ledger on its market search; text (optional) goes into the search line.

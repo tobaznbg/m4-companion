@@ -221,6 +221,11 @@ SlashCmdList.M4COMPANION = function(msg)
   elseif cmd and (cmd:lower() == "suche" or cmd:lower() == "markt") then
     -- /m4 suche [Text]: the ledger's market search
     if ns.TradeBook then ns.Safe(ns.TradeBook.ShowSearch, rest) end
+  elseif msg == "klo" or msg == "boxenstopp" then
+    -- /m4 klo: the toilet break planner (only with "Min-Max-Optimierung" in the settings)
+    if not (ns.TradeBook and ns.TradeBook.ShowBoxenstopp()) then
+      print("|cffffd100M4:|r Der Boxenstopp-Planer ist aus: Einstellungen → Min-Max-Optimierung.")
+    end
   elseif msg == "buch" then
     if ns.TradeBook then ns.Safe(ns.TradeBook.Toggle) end
   elseif msg == "liste" then
