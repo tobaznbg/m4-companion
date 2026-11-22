@@ -73,16 +73,23 @@ end
 
 ns.OnReady(function() ns.Safe(create) end)
 
--- Live strip (test, 22 Nov 2026): a band of colored cells right under the minimap's zone bar,
--- for a later live channel (the companion app would read the cells). For now a dummy with
--- random colors ten times a second, to judge how it looks. Off by default; /m4 strip toggles
--- (ns.db.ui.liveStrip). Pixel exact: one cell = CELL physical pixels, whatever the UI scale.
-local STRIP_COLS, STRIP_ROWS, CELL = 56, 4, 3
+-- Live strip (test, 22 Nov 2026): a thin line right under the minimap's zone bar, for a later
+-- live channel (the companion app would read it). Each cell is a shade of the frame's gold:
+-- 8 steps per color channel above a gold base (9 bits a cell), so to the eye it stays a gold
+-- frame line. Calm: it only changes while data goes out (the dummy "sends" for half a second
+-- every few seconds). Off by default; /m4 strip toggles (ns.db.ui.liveStrip). Pixel exact:
+-- one cell = CELL x CELL physical pixels, whatever the UI scale.
+local CELL, STEPS = 2, 8
+local GOLD = { 196, 156, 64 } -- base gold (0..255), the shades go up to +STEPS-1 per channel
 local strip
 
 local function physicalPixel(frame)
   local _, height = GetPhysicalScreenSize()
   return 768 / height / frame:GetEffectiveScale()
+end
+
+local function setShade(t, r, g, b)
+  t:SetColorTexture((GOLD[1] + r) / 255, (GOLD[2] + g) / 255, (GOLD[3] + b) / 255, 1)
 end
 
 local function createStrip()
@@ -93,24 +100,34 @@ local function createStrip()
   local f = CreateFrame("Frame", "M4CompanionLiveStrip", UIParent)
   f:SetFrameStrata("HIGH")
   local px = physicalPixel(f)
-  f:SetSize(STRIP_COLS * CELL * px, STRIP_ROWS * CELL * px)
-  f:SetPoint("TOP", anchor, "BOTTOM", 0, -2 * px)
+  -- as wide as the zone bar
+  local width = (anchor:GetWidth() or 160) * anchor:GetEffectiveScale() / f:GetEffectiveScale()
+  local cols = math.max(16, math.floor(width / (CELL * px)))
+  f:SetSize(cols * CELL * px, CELL * px)
+  f:SetPoint("TOP", anchor, "BOTTOM", 0, -px)
   f.cells = {}
-  for r = 1, STRIP_ROWS do
-    for c = 1, STRIP_COLS do
-      local t = f:CreateTexture(nil, "ARTWORK")
-      t:SetSize(CELL * px, CELL * px)
-      t:SetPoint("TOPLEFT", (c - 1) * CELL * px, -(r - 1) * CELL * px)
-      if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(true); t:SetTexelSnappingBias(0) end
-      f.cells[#f.cells + 1] = t
-    end
+  for c = 1, cols do
+    local t = f:CreateTexture(nil, "ARTWORK")
+    t:SetSize(CELL * px, CELL * px)
+    t:SetPoint("TOPLEFT", (c - 1) * CELL * px, 0)
+    if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(true); t:SetTexelSnappingBias(0) end
+    setShade(t, 0, 0, 0)
+    f.cells[#f.cells + 1] = t
   end
-  local elapsed = 0
+  -- dummy: half a second of "data" every four seconds, still in between
+  local clock, tick = 0, 0
   f:SetScript("OnUpdate", function(self, dt)
-    elapsed = elapsed + dt
-    if elapsed < 0.1 then return end
-    elapsed = 0
-    for _, t in ipairs(self.cells) do t:SetColorTexture(math.random(0, 255) / 255, math.random(0, 255) / 255, math.random(0, 255) / 255, 1) end
+    clock, tick = clock + dt, tick + dt
+    if tick < 0.1 then return end
+    tick = 0
+    local sending = (clock % 4) < 0.5
+    for _, t in ipairs(self.cells) do
+      if sending then
+        setShade(t, math.random(0, STEPS - 1), math.random(0, STEPS - 1), math.random(0, STEPS - 1))
+      else
+        setShade(t, 0, 0, 0)
+      end
+    end
   end)
   return f
 end
