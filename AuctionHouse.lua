@@ -27,6 +27,9 @@ AH.COLORS = { A = "|cff4a9eff", N = "|cffd8b04a", H = "|cffe04848" }
 local SCAN_LOG_MAX = 50
 -- All data of before the split (addon up to 0.17.3) was read at the Horde auction house.
 local LEGACY_HOUSE = "H"
+-- The collector's cloud data (Data_AH113, the history, guild sales) is of the Horde auction
+-- house: shown only for that house (AH.HasCloud).
+AH.CLOUD = "H"
 -- ledger kinds that happen at the auction house (buy / sale only without src: src marks a
 -- merchant or trade window deal)
 local AH_KINDS = { buy = true, sale = true, post = true, expired = true, cancelled = true }
@@ -83,16 +86,44 @@ function AH.Peek(house)
   return ah and ah.houses and ah.houses[house or AH.Current()]
 end
 
--- The house the data is for: the open one, else the one this character used last, else the
--- player's faction.
-function AH.Current()
+-- The automatic house: the open one, else the one this character used last, else the player's
+-- faction.
+function AH.Auto()
   if open then return open.house end
   local ah = ns.db and ns.db.ah
   local last = ah and ah.lastHouse and ns.CharKey and ah.lastHouse[ns.CharKey()]
   return last or playerHouse()
 end
 
+-- A view of another house (the ledger's choice), only while AH.WithView runs.
+local view = nil
+
+-- The house the data is for: the viewed one while a view runs, else the automatic one.
+function AH.Current()
+  return view or AH.Auto()
+end
+
+-- Runs fn(...) with every reader (scan data, item prices) on `house`; returns fn's results.
+-- house nil: the automatic one.
+function AH.WithView(house, fn, ...)
+  local before = view
+  view = house
+  local result = { pcall(fn, ...) }
+  view = before
+  if not result[1] then error(result[2], 0) end
+  return unpack(result, 2)
+end
+
 function AH.IsOpen() return open ~= nil end
+
+-- Whether the cloud data belongs to the house (default: the current one).
+function AH.HasCloud(house)
+  return (house or AH.Current()) == AH.CLOUD
+end
+
+-- The home house: the one of the player's faction. Records of no house (crafts, merchant,
+-- trade window, mails of an unknown sender) belong to it.
+function AH.Home() return playerHouse() end
 
 -- The auctioneer in front of the player: { house, npc, name, guess } or nil.
 function AH.Open() return open end
@@ -111,7 +142,7 @@ end
 -- Marks a record with the house and auctioneer it comes from (ah, npc); returns it.
 function AH.Tag(t)
   if type(t) ~= "table" then return t end
-  t.ah = t.ah or AH.Current()
+  t.ah = t.ah or AH.Auto()
   if open and open.npc and t.npc == nil then t.npc = open.npc end
   return t
 end
@@ -174,7 +205,7 @@ end
 
 ns.On("AUCTION_HOUSE_SHOW", function()
   if not ns.db then return end
-  local previous = AH.Current()
+  local previous = AH.Auto()
   local house, id, name, guess = detect()
   open = { house = house, npc = id, name = name, guess = guess }
   root().lastHouse[ns.CharKey()] = house
@@ -237,6 +268,12 @@ local function migrate()
   ah.v = 3
 end
 
+-- The house a record is shown under: its own (AH.Of), else the home house (crafts, merchant,
+-- trade window and trades of an unknown house).
+function AH.ShownUnder(e)
+  return AH.Of(e) or AH.Home()
+end
+
 -- House of a record (ledger event, sniper log line, own auction): its own, else Horde for a
 -- record of before the split; nil when unknown.
 function AH.Of(e)
@@ -291,4 +328,105 @@ function AH.Command(arg)
       t and ("Scan " .. date("%d.%m. %H:%M", t) .. ", " .. (h.scans or 0) .. " Scans") or "kein Scan",
       h and h.legacy and ("  |cff999999(Altdaten: " .. h.legacy .. ")|r") or ""))
   end
+end
+
+-- Choice of the house a window shows -------------------------------------------------------
+-- AH.Chooser(parent, width, onChange): a dropdown Allianz / Neutral / Horde. Preselected is the
+-- automatic house (marked "(auto)", green frame); another choice gets a red, pulsing frame. A
+-- choice that becomes the automatic house (the player goes there) is automatic again.
+--   d.Selected()  the house to show ("A"/"N"/"H")
+--   d.IsAuto()    true while the automatic house is shown
+--   d.Update()    text and frame (also after the automatic house moved)
+--   d.Select(h)   sets the choice (nil: automatic), without onChange
+-- onChange(house) runs after the player picked one.
+
+-- The frame around the choice: green and still, or red and pulsing. f.Set(auto)
+local function choiceFrame(target)
+  local f = CreateFrame("Frame", nil, target)
+  f:SetPoint("TOPLEFT", target, "TOPLEFT", -4, 3)
+  f:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 4, -3)
+  f:SetFrameLevel((target:GetFrameLevel() or 1) + 5)
+  local edges = {}
+  local function edge(p1, p2, horizontal)
+    local t = f:CreateTexture(nil, "OVERLAY")
+    t:SetPoint(p1); t:SetPoint(p2)
+    if horizontal then t:SetHeight(2) else t:SetWidth(2) end
+    edges[#edges + 1] = t
+  end
+  edge("TOPLEFT", "TOPRIGHT", true); edge("BOTTOMLEFT", "BOTTOMRIGHT", true)
+  edge("TOPLEFT", "BOTTOMLEFT", false); edge("TOPRIGHT", "BOTTOMRIGHT", false)
+  local pulse = f:CreateAnimationGroup()
+  pulse:SetLooping("BOUNCE")
+  local fade = pulse:CreateAnimation("Alpha")
+  fade:SetFromAlpha(1); fade:SetToAlpha(0.2); fade:SetDuration(0.6)
+  if fade.SetSmoothing then fade:SetSmoothing("IN_OUT") end
+  function f.Set(auto)
+    for _, t in ipairs(edges) do
+      if auto then t:SetColorTexture(0.37, 0.83, 0.55, 0.95) else t:SetColorTexture(1, 0.25, 0.25, 1) end
+    end
+    if auto then
+      pulse:Stop(); f:SetAlpha(1)
+    elseif not pulse:IsPlaying() then
+      pulse:Play()
+    end
+  end
+  return f
+end
+
+function AH.Chooser(parent, width, onChange)
+  local sel = nil -- nil: the automatic house
+  local d
+  local function selected() return sel or AH.Auto() end
+  local function options()
+    local auto, opts = AH.Auto(), {}
+    for _, key in ipairs(AH.KEYS) do
+      opts[#opts + 1] = { key = key, label = AH.NAMES[key] .. (key == auto and " (auto)" or "") }
+    end
+    return opts
+  end
+  local function choose(key)
+    sel = key ~= AH.Auto() and key or nil
+    d.Update()
+    if onChange then ns.Safe(onChange, selected()) end
+  end
+  local ok, dd = pcall(CreateFrame, "DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
+  if ok and dd and dd.SetupMenu then
+    d = dd
+    d:SetWidth(width)
+    d:SetupMenu(function(_, rootMenu)
+      for _, o in ipairs(options()) do
+        rootMenu:CreateRadio(o.label, function() return selected() == o.key end, function() choose(o.key) end)
+      end
+    end)
+  else
+    -- no menu API: a button that steps through the houses
+    local okB, bt = pcall(CreateFrame, "Button", nil, parent, "UIPanelButtonTemplate")
+    d = okB and bt or CreateFrame("Button", nil, parent)
+    d:SetSize(width, 22)
+    d:SetScript("OnClick", function()
+      local opts = options()
+      for i, o in ipairs(opts) do
+        if o.key == selected() then choose(opts[i % #opts + 1].key) break end
+      end
+    end)
+  end
+  local border = choiceFrame(d)
+  function d.Update()
+    if sel == AH.Auto() then sel = nil end
+    for _, o in ipairs(options()) do
+      if o.key == selected() and d.SetText then d:SetText(o.label) end
+    end
+    if d.GenerateMenu then pcall(d.GenerateMenu, d) end
+    border.Set(sel == nil)
+  end
+  d.Selected = selected
+  function d.IsAuto() return sel == nil end
+  -- sets the choice from outside (nil: the automatic house); no onChange
+  function d.Select(house)
+    sel = (house and house ~= AH.Auto()) and house or nil
+    d.Update()
+  end
+  AH.OnChange(function() d.Update() end)
+  d.Update()
+  return d
 end

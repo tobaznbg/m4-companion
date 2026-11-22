@@ -14,6 +14,43 @@ local PERIODS = { { key = "today", label = "Heute" }, { key = "week", label = "7
 local window
 local period = "all"
 local charSel = nil -- nil: all characters of the household, else one character key
+local choices = {} -- the choice row under the title (buildChoices)
+
+-- The auction house the pages show: the choice (AuctionHouse.Chooser), else the automatic one.
+local function shownHouse()
+  return choices.house and choices.house.Selected() or ns.AuctionHouse.Auto()
+end
+
+-- Whether a record (ledger event, stored auction) belongs to the shown house; records of no
+-- house or of an unknown one belong to the home house (AuctionHouse.ShownUnder).
+local function inHouse(e)
+  return ns.AuctionHouse.ShownUnder(e) == shownHouse()
+end
+
+-- Runs fn(...) on the shown house: scan data and prices of that house (AuctionHouse.WithView),
+-- the profit figures filtered to its trades (Profit.SetHouseFilter), reset afterwards.
+local function withHouse(fn, ...)
+  local house = shownHouse()
+  local P = ns.Profit
+  local before = P and P.HouseFilter and P.HouseFilter()
+  if P and P.SetHouseFilter then P.SetHouseFilter(house) end
+  local result = { pcall(ns.AuctionHouse.WithView, house, fn, ...) }
+  if P and P.SetHouseFilter then P.SetHouseFilter(before) end
+  if not result[1] then error(result[2], 0) end
+  return unpack(result, 2)
+end
+
+-- A tab's build function on the shown house; the page's Refresh too, every time.
+local function viewed(build)
+  return function(page, ...)
+    withHouse(build, page, ...)
+    local refresh = page.Refresh
+    if refresh and not page.m4Viewed then
+      page.m4Viewed = true
+      page.Refresh = function(...) return withHouse(refresh, ...) end
+    end
+  end
+end
 
 -- The characters the pages show: the chosen one or the whole household (same realm and faction).
 local function household()
@@ -180,7 +217,7 @@ local function tradeRows()
   for i = #events, 1, -1 do
     local e = events[i]
     local who = L.CharOf and L.CharOf(e)
-    if not charSel or who == charSel then recent[#recent + 1] = { e = e, who = who } end
+    if (not charSel or who == charSel) and inHouse(e) then recent[#recent + 1] = { e = e, who = who } end
     if #recent >= 20 then break end
   end
   for _, x in ipairs(recent) do
@@ -472,7 +509,7 @@ local function buildLedger(page)
 
   local function eventRows(itemID)
     local rows = {}
-    for _, e in ipairs(ns.Profit.ItemEvents(itemID, since()) or {}) do
+    for _, e in ipairs(withHouse(ns.Profit.ItemEvents, itemID, since()) or {}) do
       local amount = ""
       if e.k == "buy" then amount = RED .. "-" .. money(e.c) .. "|r"
       elseif e.k == "sale" then amount = GREEN .. "+" .. money((e.c or 0) - (e.cut or 0)) .. "|r"
@@ -820,6 +857,8 @@ local function collectAuctions()
   local keys = shownKeys()
   local mine = false
   for _, key in ipairs(keys) do if key == me then mine = true end end
+  -- the live list is the automatic house's: only when that one is shown
+  if shownHouse() ~= ns.AuctionHouse.Auto() then mine = false end
   local rows = mine and My and My.Rows and My.Rows() or {}
   local any = false
   for _, r in ipairs(rows) do
@@ -843,7 +882,7 @@ local function collectAuctions()
       return d < 3600 and string.format("vor %d min", math.floor(d / 60 + 0.5)) or string.format("vor %d h", math.floor(d / 3600 + 0.5))
     end
     for _, a in ipairs(saved and saved.list or {}) do
-      if not a.s then
+      if not a.s and inHouse(a) then
         local r = { itemID = a.i, unit = a.u, quantity = a.q, foreign = a.f, diff = a.df, st = a.st,
           timeLeft = a.tl and math.max(0, a.tl - age) or nil }
         local when = (a.ck and ("  " .. MUTED .. "· geprüft " .. ago(a.ck) .. "|r") or "") .. who
@@ -1050,7 +1089,8 @@ end
 -- Every searchable item once: { id, name, low, data = has collector or scan data }.
 local function buildIndex()
   local seen, list = {}, {}
-  local house = ns.AHData and ns.AHData[113]
+  -- the cloud data only for its house (AuctionHouse.CLOUD)
+  local house = ns.AuctionHouse.HasCloud() and ns.AHData and ns.AHData[113]
   local market = house and house.items or {}
   local scanned = ns.Item and ns.Item.ScannedItems and ns.Item.ScannedItems() or {}
   local scan = ns.AuctionHouse.Peek()
@@ -1177,13 +1217,15 @@ local function buildSearch(page, w)
   page.Box = box
 
   local function openDetail(id)
-    if id and ns.ItemDetail then ns.Safe(ns.ItemDetail.Show, id, { anchor = w.frame }) end
+    -- on the house the search shows (the ledger's choice)
+    if id and ns.ItemDetail then ns.Safe(ns.ItemDetail.Show, id, { anchor = w.frame, house = shownHouse() }) end
   end
 
   local function place(active)
     box:ClearAllPoints()
     if active then
-      box:SetWidth(380)
+      box:SetWidth(330) -- leaves room for the house choice at the right edge
+      -- (centred: 171..501 of 673; the choice starts at about 505 with its label)
       box:SetPoint("TOP", w.frame, "TOP", 0, -30)
     else
       box:SetWidth(440)
@@ -1226,9 +1268,9 @@ local function buildSearch(page, w)
     token = token + 1
     local mine = token
     if C_Timer and C_Timer.After then
-      C_Timer.After(0.15, function() if mine == token then ns.Safe(run) end end)
+      C_Timer.After(0.15, function() if mine == token then ns.Safe(withHouse, run) end end)
     else
-      ns.Safe(run)
+      ns.Safe(withHouse, run)
     end
   end)
   box:HookScript("OnEnterPressed", function(self)
@@ -1259,9 +1301,9 @@ end
 
 local function refreshPage(page) if page.Refresh then page.Refresh() end end
 
--- The window's choice row under the title: character (all or one) left, period right. The
+-- The window's choice row under the title: character (all or one) left, auction house in the
+-- middle, period right (the table `choices` is declared at the top: shownHouse reads it). The
 -- period only where it counts (overview, ledger); the gold tab shows every character anyway.
-local choices = {}
 local function chooser(parent, width, options, get, set)
   local ok, d = pcall(CreateFrame, "DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
   if ok and d and d.SetupMenu then
@@ -1314,6 +1356,13 @@ local function buildChoices(w)
   end)
   choices.char:SetPoint("LEFT", charLabel, "RIGHT", 8, 0)
   choices.charLabel = charLabel
+  -- the auction house: the automatic one (open AH, else the last used) or another one
+  local houseLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  houseLabel:SetPoint("LEFT", choices.char, "RIGHT", 18, 0)
+  houseLabel:SetText("AH")
+  choices.house = ns.AuctionHouse.Chooser(f, 130, function() refreshCurrent() end)
+  choices.house:SetPoint("LEFT", houseLabel, "RIGHT", 8, 0)
+  choices.houseLabel = houseLabel
   choices.period = chooser(f, 100, function() return PERIODS end, function() return period end, function(key)
     period = key
     refreshCurrent()
@@ -1328,7 +1377,20 @@ end
 
 local function showChoices(key)
   local withChar, withPeriod = key ~= "gold" and key ~= "search" and key ~= "boxenstopp", key == "overview" or key == "ledger"
+  local withHouseChoice = key ~= "gold" and key ~= "boxenstopp"
   choices.char:SetShown(withChar); choices.charLabel:SetShown(withChar)
+  choices.house:SetShown(withHouseChoice); choices.houseLabel:SetShown(withHouseChoice)
+  -- the search line sits in the choice row: the house choice moves to the right edge there
+  choices.house:ClearAllPoints()
+  if key == "search" then
+    choices.house:SetPoint("TOPRIGHT", -12, -30)
+    choices.houseLabel:ClearAllPoints()
+    choices.houseLabel:SetPoint("RIGHT", choices.house, "LEFT", -8, 0)
+  else
+    choices.houseLabel:ClearAllPoints()
+    choices.houseLabel:SetPoint("LEFT", choices.char, "RIGHT", 18, 0)
+    choices.house:SetPoint("LEFT", choices.houseLabel, "RIGHT", 8, 0)
+  end
   choices.period:SetShown(withPeriod); choices.periodLabel:SetShown(withPeriod)
   for _, d in pairs(choices) do if d.Update then d.Update() end end
 end
@@ -1343,20 +1405,20 @@ local function create()
   window = ns.NativeWindow.New({ name = NAME, title = "Handelsbuch", icon = ICON })
   buildChoices(window)
   window:AddTab({ key = "overview", title = "Übersicht", icon = "Interface\\Icons\\INV_Misc_Coin_02", overview = true,
-    build = buildOverview, onShow = onTab("overview", function(page)
+    build = viewed(buildOverview), onShow = onTab("overview", function(page)
       if page.Refresh then page.Refresh() end
       ns.Safe(TradeBook.CheckAuctions)
     end) })
   window:AddTab({ key = "ledger", title = "Handelsbuch", icon = "Interface\\Icons\\INV_Misc_Note_01",
-    build = buildLedger, onShow = onTab("ledger") })
+    build = viewed(buildLedger), onShow = onTab("ledger") })
   window:AddTab({ key = "stock", title = "Bestand", icon = "Interface\\Icons\\INV_Box_02",
-    build = buildStock, onShow = onTab("stock") })
+    build = viewed(buildStock), onShow = onTab("stock") })
   window:AddTab({ key = "auctions", title = "Auktionen", icon = "Interface\\Icons\\INV_Hammer_15",
-    build = buildAuctions, onShow = onTab("auctions", function(page) refreshPage(page); ns.Safe(TradeBook.CheckAuctions) end) })
+    build = viewed(buildAuctions), onShow = onTab("auctions", function(page) refreshPage(page); ns.Safe(TradeBook.CheckAuctions) end) })
   window:AddTab({ key = "gold", title = "Gold", icon = "Interface\\Icons\\INV_Misc_Coin_01",
     build = buildGold, onShow = onTab("gold") })
   window:AddTab({ key = "search", title = "Marktsuche", icon = SEARCH_TAB_ICON, overview = true,
-    build = buildSearch, onShow = onTab("search") })
+    build = viewed(buildSearch), onShow = onTab("search") })
   -- under the search: Dr. Porzellan's toilet break planner, only with "Min-Max-Optimierung" (Boxenstopp.lua)
   if ns.Boxenstopp then
     window:AddTab({ key = "boxenstopp", title = "Boxenstopp-Planer", icon = ns.Boxenstopp.ICON, overview = true,
@@ -1435,6 +1497,11 @@ ns.On("PLAYER_MONEY", function()
   local c = ns.db and ns.db.chars and ns.CharKey and ns.db.chars[ns.CharKey()]
   if c and GetMoney then c.money, c.moneyT = GetMoney(), time() end
   if window and window.frame:IsShown() and (window.current == "gold" or window.current == "overview") then refreshCurrent() end
+end)
+
+-- Another auction house opened: the automatic choice moved (frame and page follow).
+ns.AuctionHouse.OnChange(function()
+  if window and window.frame:IsShown() then refreshCurrent() end
 end)
 
 -- Own auctions changed (MyAuctions: list or a search result): the shown page follows.

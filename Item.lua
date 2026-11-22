@@ -52,7 +52,9 @@ local VENDOR_ESTIMATE = {
 local Item = {}
 local observed = {}   -- itemID -> { now, t } from single item searches (this session)
 
+-- The cloud data is of one auction house (AuctionHouse.CLOUD): nothing for the others.
 local function collector(itemID)
+  if not ns.AuctionHouse.HasCloud() then return nil, nil end
   local house = ns.AHData and ns.AHData[HOUSE]
   return house and house.items[itemID], house
 end
@@ -82,7 +84,7 @@ end
 local function guildSale(itemID)
   local live = rawget(_G, "M4CompanionData")
   local gs = type(live) == "table" and live.GuildSales
-  if type(gs) ~= "table" then return nil end
+  if type(gs) ~= "table" or not ns.AuctionHouse.HasCloud() then return nil end
   local items = type(gs.houses) == "table" and gs.houses[HOUSE] or gs.items
   local row = type(items) == "table" and items[itemID]
   if type(row) ~= "table" or type(row[1]) ~= "number" or row[1] <= 0 then return nil end
@@ -115,7 +117,8 @@ function Item.Get(itemID)
     bestT = ah.currentT
   end
   local o = observed[itemID]
-  if o and o.t > bestT then
+  -- single searches belong to the automatic house: not while another house is viewed
+  if o and o.t > bestT and ns.AuctionHouse.Current() == ns.AuctionHouse.Auto() then
     e.now = o.now
     bestT = o.t
   end
@@ -220,6 +223,7 @@ end
 -- The app's live copy first; an item it does not know (older or smaller file) from the copy
 -- shipped with the addon.
 function Item.History(itemID, hourly)
+  if not ns.AuctionHouse.HasCloud() then return nil end -- the history is the cloud's house's
   local live = historyTable()
   return historyFrom(live, itemID, hourly)
     or (live ~= ns.History and historyFrom(ns.History, itemID, hourly)) or nil

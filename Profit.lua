@@ -102,7 +102,21 @@ function Profit.OwnUseMark(itemID) return ownMarks()[itemID] end
 local charFilter = nil
 function Profit.SetCharFilter(key) charFilter = key end
 function Profit.CharFilter() return charFilter end
+-- Auction house filter (the ledger window's choice, "A"/"N"/"H"): the figures count only the
+-- events of that house. Deals that belong to no house (crafts, merchant, trade window) and
+-- trades whose house is unknown count for the home house (AuctionHouse.ShownUnder); the pools
+-- run over all. nil = every house.
+local houseFilter = nil
+function Profit.SetHouseFilter(house) houseFilter = house end
+function Profit.HouseFilter() return houseFilter end
+local function houseOK(e)
+  if not houseFilter then return true end
+  return ns.AuctionHouse.ShownUnder(e) == houseFilter
+end
+Profit.HouseOK = houseOK
+
 local function charOK(e)
+  if not houseOK(e) then return false end
   return not charFilter or not (ns.Ledger and ns.Ledger.CharOf) or ns.Ledger.CharOf(e) == charFilter
 end
 
@@ -361,7 +375,7 @@ local function clock() return (GetTime and GetTime()) or os.clock() end
 local function replayAll()
   local events = ns.Ledger and (ns.Ledger.HouseholdEvents or ns.Ledger.Events) and (ns.Ledger.HouseholdEvents or ns.Ledger.Events)() or {}
   local last = events[#events]
-  local key = tostring(#events) .. ":" .. tostring(last) .. ":" .. tostring(charFilter)
+  local key = tostring(#events) .. ":" .. tostring(last) .. ":" .. tostring(charFilter) .. ":" .. tostring(houseFilter)
   local now = clock()
   if not cached or key ~= cachedKey or now - cachedAt > CACHE_TTL then
     cached, cachedKey, cachedAt = { replay(nil) }, key, now

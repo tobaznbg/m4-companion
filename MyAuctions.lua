@@ -71,7 +71,7 @@ local function readOwned()
     end
   end
   ownedT = time()
-  ownedHouse = ns.AuctionHouse.Current()
+  ownedHouse = ns.AuctionHouse.Auto()
 end
 
 -- Another house opened: the list read at the last one is not this house's.
@@ -283,7 +283,7 @@ end
 local function storeOwned()
   if not (ns.db and ns.CharKey) then return end
   -- only a list read at the current house (else that house's auctions would look gone)
-  if not ownedHouse or ownedHouse ~= ns.AuctionHouse.Current() then return end
+  if not ownedHouse or ownedHouse ~= ns.AuctionHouse.Auto() then return end
   -- the result of the last check per item, kept with the auctions (shown without the AH):
   -- st status, f cheapest other offer, df the gap, ck when it was checked
   local checks = {}
@@ -298,7 +298,7 @@ local function storeOwned()
   -- The answer covers only the house the player stands at: the auctions of the other houses
   -- stay from their last answer (until their time ran out). Entries without a house are
   -- from before the split and are replaced as before.
-  local here = ns.AuctionHouse.Current()
+  local here = ns.AuctionHouse.Auto()
   local prevT = ns.db.owned and ns.db.owned[key0] and ns.db.owned[key0].t or 0
   local now = time()
   for _, p in ipairs(prevList) do

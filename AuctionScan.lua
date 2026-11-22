@@ -301,7 +301,7 @@ function Scan.Start()
   end
 
   local open = ns.AuctionHouse.Open()
-  state = { api = api, started = time(), listings = {}, count = 0, house = ns.AuctionHouse.Current(),
+  state = { api = api, started = time(), listings = {}, count = 0, house = ns.AuctionHouse.Auto(),
     npc = open and open.npc, npcName = open and open.name }
   db(state.house).lastScanT = time()
   ns.db.ah.lastScanT = time()
