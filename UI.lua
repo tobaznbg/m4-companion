@@ -228,6 +228,8 @@ SlashCmdList.M4COMPANION = function(msg)
     end
   elseif msg == "buch" then
     if ns.TradeBook then ns.Safe(ns.TradeBook.Toggle) end
+  elseif msg == "strip" then
+    if ns.ToggleLiveStrip then ns.Safe(ns.ToggleLiveStrip) end
   elseif msg == "liste" then
     if ns.ShoppingList then ns.Safe(ns.ShoppingList.Toggle) end
   elseif msg == "berufe" or msg == "b" then

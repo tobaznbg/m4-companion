@@ -72,3 +72,61 @@ local function create()
 end
 
 ns.OnReady(function() ns.Safe(create) end)
+
+-- Live strip (test, 22 Nov 2026): a band of colored cells right under the minimap's zone bar,
+-- for a later live channel (the companion app would read the cells). For now a dummy with
+-- random colors ten times a second, to judge how it looks. Off by default; /m4 strip toggles
+-- (ns.db.ui.liveStrip). Pixel exact: one cell = CELL physical pixels, whatever the UI scale.
+local STRIP_COLS, STRIP_ROWS, CELL = 56, 4, 3
+local strip
+
+local function physicalPixel(frame)
+  local _, height = GetPhysicalScreenSize()
+  return 768 / height / frame:GetEffectiveScale()
+end
+
+local function createStrip()
+  local cluster = rawget(_G, "MinimapCluster")
+  local anchor = (type(cluster) == "table" and (rawget(cluster, "BorderTop") or rawget(cluster, "ZoneTextButton")))
+    or rawget(_G, "MinimapZoneTextButton") or rawget(_G, "Minimap")
+  if not anchor then return nil end
+  local f = CreateFrame("Frame", "M4CompanionLiveStrip", UIParent)
+  f:SetFrameStrata("HIGH")
+  local px = physicalPixel(f)
+  f:SetSize(STRIP_COLS * CELL * px, STRIP_ROWS * CELL * px)
+  f:SetPoint("TOP", anchor, "BOTTOM", 0, -2 * px)
+  f.cells = {}
+  for r = 1, STRIP_ROWS do
+    for c = 1, STRIP_COLS do
+      local t = f:CreateTexture(nil, "ARTWORK")
+      t:SetSize(CELL * px, CELL * px)
+      t:SetPoint("TOPLEFT", (c - 1) * CELL * px, -(r - 1) * CELL * px)
+      if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(true); t:SetTexelSnappingBias(0) end
+      f.cells[#f.cells + 1] = t
+    end
+  end
+  local elapsed = 0
+  f:SetScript("OnUpdate", function(self, dt)
+    elapsed = elapsed + dt
+    if elapsed < 0.1 then return end
+    elapsed = 0
+    for _, t in ipairs(self.cells) do t:SetColorTexture(math.random(0, 255) / 255, math.random(0, 255) / 255, math.random(0, 255) / 255, 1) end
+  end)
+  return f
+end
+
+local function showStrip(on)
+  if on and not strip then strip = createStrip() end
+  if strip then strip:SetShown(on) end
+end
+
+function ns.ToggleLiveStrip()
+  ns.db.ui = ns.db.ui or {}
+  ns.db.ui.liveStrip = not ns.db.ui.liveStrip
+  showStrip(ns.db.ui.liveStrip)
+  print("|cff33ccffm4:|r Live-Streifen " .. (ns.db.ui.liveStrip and "an" or "aus"))
+end
+
+ns.On("PLAYER_ENTERING_WORLD", function()
+  if ns.db and ns.db.ui and ns.db.ui.liveStrip then ns.Safe(showStrip, true) end
+end)
