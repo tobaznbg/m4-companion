@@ -73,15 +73,20 @@ end
 
 ns.OnReady(function() ns.Safe(create) end)
 
--- Live strip (test, 22 Nov 2026): a band of ROWS lines of cells right under the minimap's zone bar, for a later
--- live channel (the companion app would read it). Each cell is a shade of the frame's gold:
--- 8 steps per color channel above a gold base (9 bits a cell), so to the eye it stays a gold
--- frame line. Calm: it only changes while data goes out (the dummy "sends" for half a second
--- every few seconds). Off by default; /m4 strip toggles (ns.db.ui.liveStrip). Pixel exact:
--- one cell = CELL x CELL physical pixels, whatever the UI scale.
-local CELL, ROWS, STEPS = 3, 2, 8
-local GOLD = { 196, 156, 64 } -- base gold (0..255), the shades go up to +STEPS-1 per channel
+-- Live strip (test, 22 Nov 2026): a band of cells right under the minimap's zone bar that the
+-- companion app reads off the screen (tools: m4-companion cmd/m4-strip). Each cell is a shade of
+-- the frame's gold: GOLD + 0..7 per color channel, so to the eye it stays a gold band.
+--   cell 1  reference: GOLD + (0, 0, 0)        cell 2  reference: GOLD + (7, 7, 7)
+--   cell 3… one byte each: r = bits 7..5, g = bits 4..2, b = bits 1..0 + 4 * phase
+--           (phase flips with every new packet; a reader seeing mixed phases saw a torn frame)
+--   packet  0xA5, sequence, length, payload…, checksum (sum of sequence..payload mod 256)
+-- Payload now: the player's position - map id (2 bytes), x and y (0..65535 each, 2 bytes), facing
+-- (0..255). Sent only when it changes; otherwise the band stands still. Off by default;
+-- /m4 strip toggles (ns.db.ui.liveStrip). Pixel exact: a cell = CELL x CELL physical pixels.
+local CELL, ROWS = 3, 2
+local GOLD = { 196, 156, 64 } -- base gold (0..255); the shades go up to +7 per channel
 local strip
+local seq, phase, lastPayload = 0, 0, nil
 
 local function physicalPixel(frame)
   local _, height = GetPhysicalScreenSize()
@@ -90,6 +95,40 @@ end
 
 local function setShade(t, r, g, b)
   t:SetColorTexture((GOLD[1] + r) / 255, (GOLD[2] + g) / 255, (GOLD[3] + b) / 255, 1)
+end
+
+local function u16(v) v = math.max(0, math.min(65535, math.floor(v + 0.5))); return math.floor(v / 256), v % 256 end
+
+-- The player's position as payload bytes, or nil.
+local function positionPayload()
+  if not (C_Map and C_Map.GetBestMapForUnit) then return nil end
+  local mapID = C_Map.GetBestMapForUnit("player")
+  local pos = mapID and C_Map.GetPlayerMapPosition and C_Map.GetPlayerMapPosition(mapID, "player")
+  if not pos then return nil end
+  local x, y = pos:GetXY()
+  local facing = GetPlayerFacing and GetPlayerFacing() or 0
+  local m1, m2 = u16(mapID)
+  local x1, x2 = u16((x or 0) * 65535)
+  local y1, y2 = u16((y or 0) * 65535)
+  return { m1, m2, x1, x2, y1, y2, math.floor((facing or 0) / (2 * math.pi) * 255 + 0.5) % 256 }
+end
+
+local function draw(f, bytes)
+  setShade(f.cells[1], 0, 0, 0)
+  setShade(f.cells[2], 7, 7, 7)
+  for k = 3, #f.cells do
+    local b = bytes[k - 2] or 0
+    setShade(f.cells[k], math.floor(b / 32), math.floor(b / 4) % 8, b % 4 + 4 * phase)
+  end
+end
+
+local function send(f, payload)
+  if #payload > #f.cells - 6 then return end
+  seq, phase = (seq + 1) % 256, 1 - phase
+  local bytes, sum = { 0xA5, seq, #payload }, seq + #payload
+  for _, b in ipairs(payload) do bytes[#bytes + 1] = b; sum = sum + b end
+  bytes[#bytes + 1] = sum % 256
+  draw(f, bytes)
 end
 
 local function createStrip()
@@ -112,23 +151,22 @@ local function createStrip()
       t:SetSize(CELL * px, CELL * px)
       t:SetPoint("TOPLEFT", (c - 1) * CELL * px, -(r - 1) * CELL * px)
       if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(true); t:SetTexelSnappingBias(0) end
-      setShade(t, 0, 0, 0)
       f.cells[#f.cells + 1] = t
     end
   end
-  -- dummy: half a second of "data" every four seconds, still in between
-  local clock, tick = 0, 0
+  draw(f, {})
+  -- ten times a second: a new packet when the position changed, else the band stands still
+  local tick = 0
   f:SetScript("OnUpdate", function(self, dt)
-    clock, tick = clock + dt, tick + dt
+    tick = tick + dt
     if tick < 0.1 then return end
     tick = 0
-    local sending = (clock % 4) < 0.5
-    for _, t in ipairs(self.cells) do
-      if sending then
-        setShade(t, math.random(0, STEPS - 1), math.random(0, STEPS - 1), math.random(0, STEPS - 1))
-      else
-        setShade(t, 0, 0, 0)
-      end
+    local p = positionPayload()
+    if not p then return end
+    local key = table.concat(p, ",")
+    if key ~= lastPayload then
+      lastPayload = key
+      send(self, p)
     end
   end)
   return f
