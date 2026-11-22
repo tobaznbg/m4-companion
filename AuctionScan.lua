@@ -2,11 +2,13 @@
 -- Supports the classic auction API (QueryAuctionItems getAll) and the modern one
 -- (C_AuctionHouse.ReplicateItems); which one the client has is detected at runtime.
 --
--- Stored in M4CompanionDB.ah:
---   last     { t, items = { [itemID] = { fingerprint, ... } } }  previous scan, for the diff
---   current  { [itemID] = { min, mv, qty, n, sellers } }         latest scan summary
---   days     { [dayKey] = { [itemID] = day row } }               see AuctionStats.AddToDay
---   lastScanT, scans, api
+-- Stored per auction house (Allianz / Neutral / Horde, see AuctionHouse.lua) in
+-- M4CompanionDB.ah.houses[house]:
+--   last     { t, npc, items = { [itemID] = { fingerprint, ... } } }  previous scan, for the diff
+--   current  { [itemID] = { min, mv, qty, n, sellers } }              latest scan summary
+--   days     { [dayKey] = { [itemID] = day row } }                    see AuctionStats.AddToDay
+--   currentT, npc (auctioneer of the latest scan), lastScanT, scans, api, log (one line per scan)
+-- A scan belongs to the house it was started at, also when it finishes after a switch.
 local ADDON, ns = ...
 
 local Scan = {}
@@ -18,16 +20,17 @@ local ITEM_BATCH = 300         -- items processed per frame when saving
 local MAX_DIFF_AGE = 24 * 3600 -- older previous scans say nothing about sales
 local PREFIX = "|cffffd100M4:|r "
 
-local state -- running scan: { api, started, listings = { [itemID] = { ... } }, count }
+local state -- running scan: { api, started, house, npc, listings = { [itemID] = { ... } }, count }
 local button
 
-local function db()
-  local ah = ns.db.ah
-  if not ah then
-    ah = { days = {}, current = {}, scans = 0 }
-    ns.db.ah = ah
-  end
-  return ah
+-- The data of a house (default: the current one).
+local function db(house)
+  return ns.AuctionHouse.Data(house)
+end
+
+-- The data of the current house without creating it.
+local function peek()
+  return ns.db and ns.AuctionHouse.Peek()
 end
 
 local function hasModern()
@@ -48,7 +51,8 @@ end
 
 -- Seconds since the last finished scan, or nil.
 function Scan.Age()
-  local t = ns.db and ns.db.ah and ns.db.ah.currentT
+  local h = peek()
+  local t = h and h.currentT
   return t and (time() - t) or nil
 end
 
@@ -79,10 +83,12 @@ local doneListeners = {}
 function Scan.OnDone(fn) table.insert(doneListeners, fn) end
 
 function Scan.HasData()
-  return ns.db and ns.db.ah and ns.db.ah.lastScanT ~= nil
+  local h = peek()
+  return h ~= nil and h.lastScanT ~= nil
 end
 
--- Seconds until the next full scan is allowed (0 = now).
+-- Seconds until the next full scan is allowed (0 = now). The server's limit counts every
+-- scan, whichever house it was at.
 function Scan.Wait()
   local last = ns.db.ah and ns.db.ah.lastScanT
   if not last then return 0 end
@@ -169,7 +175,7 @@ end
 
 finish = function()
   local scanState = state
-  local ah = db()
+  local ah = db(scanState.house)
   local now = time()
   local previous = ah.last
   local elapsed = previous and (now - previous.t) or nil
@@ -216,14 +222,17 @@ finish = function()
       C_Timer.After(0, function() ns.Safe(step) end)
       return
     end
-    ah.last = { t = now, items = lastItems }
+    ah.last = { t = now, npc = scanState.npc, items = lastItems }
     ah.current = current
     ah.currentT = now
+    ah.npc = scanState.npc
     ah.scans = (ah.scans or 0) + 1
     ah.api = scanState.api
+    ns.AuctionHouse.LogScan(scanState.house, { t = now, npc = scanState.npc, name = scanState.npcName,
+      offers = scanState.count, items = #itemIDs })
     ns.AuctionStats.Prune(ah.days, now)
-    print(string.format("%sScan fertig: %d Angebote, %d Items, %d Sekunden.%s", PREFIX,
-      scanState.count, #itemIDs, now - scanState.started,
+    print(string.format("%sScan fertig (%s): %d Angebote, %d Items, %d Sekunden.%s", PREFIX,
+      ns.AuctionHouse.Label(scanState.house, scanState.npc), scanState.count, #itemIDs, now - scanState.started,
       diff and string.format(" Seit dem letzten Scan vermutlich %d Angebote verkauft.", soldTotal) or ""))
     if ns.PlannerUI and ns.PlannerUI.Refresh then ns.Safe(ns.PlannerUI.Refresh) end
     for _, fn in ipairs(doneListeners) do ns.Safe(fn) end
@@ -291,8 +300,11 @@ function Scan.Start()
     return
   end
 
-  state = { api = api, started = time(), listings = {}, count = 0 }
-  db().lastScanT = time()
+  local open = ns.AuctionHouse.Open()
+  state = { api = api, started = time(), listings = {}, count = 0, house = ns.AuctionHouse.Current(),
+    npc = open and open.npc, npcName = open and open.name }
+  db(state.house).lastScanT = time()
+  ns.db.ah.lastScanT = time()
   if ns.Selling then C_Timer.After(1, function() ns.Safe(ns.Selling.Refresh) end) end
   print(PREFIX .. "Vollscan gestartet – das Spiel kann kurz hängen.")
   if api == "legacy" then
@@ -360,6 +372,7 @@ local function createButton()
   t:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:AddLine("AH-Scan")
+    GameTooltip:AddLine("Auktionshaus: " .. ns.AuctionHouse.Label(), 1, 1, 1)
     local age = Scan.Age()
     GameTooltip:AddLine(age and ("Letzter Scan " .. ago(age)) or "Noch kein Scan", 1, 1, 1)
     if state then

@@ -74,6 +74,7 @@ local function log(kind, hit, extra)
   local s = store()
   local e = { t = time(), k = kind, i = hit.itemID, u = hit.units, p = math.floor(hit.profit), c = hit.cost }
   if extra then for k, v in pairs(extra) do e[k] = v end end
+  ns.AuctionHouse.Tag(e) -- ah, npc: the house and auctioneer of the hit
   table.insert(s.log, e)
   while #s.log > LOG_MAX do table.remove(s.log, 1) end
 end

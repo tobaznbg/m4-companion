@@ -7,7 +7,9 @@
 -- auction and is only called from a click on the row's button.
 -- Every answer is also kept per character for the companion app (Discord messages on sales):
 --   ns.db.owned[charKey] = { t = time(), g = GetMoney(), list = { { id = auctionID, i = itemID,
---     u = unit price, b = buyoutAmount, q = quantity, tl = timeLeftSeconds, s = 1 if sold }... },
+--     u = unit price, b = buyoutAmount, q = quantity, tl = timeLeftSeconds, s = 1 if sold,
+--     ah = auction house "A"/"N"/"H", npc = auctioneer id, ht = time of that house's answer
+--     (only on auctions of another house than the last answer) }... },
 --     cx = { [auctionID] = time() of a cancel in game (AUCTION_CANCELED), kept CANCEL_KEEP },
 --     stk = stock snapshot for the server, written on logout (Profit.WriteSnapshot) }
 -- Discord settings (read by the app, applied by the server): ns.db.settings.discord, see
@@ -21,6 +23,7 @@ local api = C_AuctionHouse or {}
 
 local owned = {}          -- list of { auctionID, itemID, itemKey, buyout, bid, quantity, timeLeftSeconds, status }
 local ownedT = nil        -- time() of the last owned auctions answer
+local ownedHouse = nil    -- the auction house that answer came from ("A"/"N"/"H")
 local wantCheck = false   -- search all items once the owned auctions arrived
 local run = nil           -- { ids = { itemID = "waiting"|"done" }, total, done }
 local failed = {}         -- itemID -> time() of a search without an answer
@@ -68,7 +71,13 @@ local function readOwned()
     end
   end
   ownedT = time()
+  ownedHouse = ns.AuctionHouse.Current()
 end
+
+-- Another house opened: the list read at the last one is not this house's.
+ns.AuctionHouse.OnChange(function()
+  owned, ownedT, ownedHouse = {}, nil, nil
+end)
 
 -- Items with at least one active auction that has a buyout (worth comparing).
 local function activeItems()
@@ -273,6 +282,8 @@ end
 -- Own auctions for the companion app: the last answer of this character (expired ones left out).
 local function storeOwned()
   if not (ns.db and ns.CharKey) then return end
+  -- only a list read at the current house (else that house's auctions would look gone)
+  if not ownedHouse or ownedHouse ~= ns.AuctionHouse.Current() then return end
   -- the result of the last check per item, kept with the auctions (shown without the AH):
   -- st status, f cheapest other offer, df the gap, ck when it was checked
   local checks = {}
@@ -284,11 +295,25 @@ local function storeOwned()
   local prevCheck = {}
   for _, p in ipairs(prevList) do if p.ck then prevCheck[p.id] = p end end
   local list = {}
+  -- The answer covers only the house the player stands at: the auctions of the other houses
+  -- stay from their last answer (until their time ran out). Entries without a house are
+  -- from before the split and are replaced as before.
+  local here = ns.AuctionHouse.Current()
+  local prevT = ns.db.owned and ns.db.owned[key0] and ns.db.owned[key0].t or 0
+  local now = time()
+  for _, p in ipairs(prevList) do
+    local answered = p.ht or prevT -- when that house answered
+    local ends = p.tl and answered + p.tl
+    if p.ah and p.ah ~= here and now - answered < 48 * 3600 and not (ends and ends < now) then
+      p.ht = answered
+      table.insert(list, p)
+    end
+  end
   for _, a in ipairs(owned) do
     if a.auctionID and not a.expired then
       local offers = ns.AHSearch and ns.AHSearch.Last(a.itemID) or nil
-      local e = { id = a.auctionID, i = a.itemID, u = unitOf(a, offers), b = a.buyout,
-        q = a.quantity or 1, tl = a.timeLeftSeconds, s = a.sold and 1 or nil }
+      local e = ns.AuctionHouse.Tag({ id = a.auctionID, i = a.itemID, u = unitOf(a, offers), b = a.buyout,
+        q = a.quantity or 1, tl = a.timeLeftSeconds, s = a.sold and 1 or nil })
       local c = checks[a.itemID]
       local p = prevCheck[a.auctionID]
       if c then

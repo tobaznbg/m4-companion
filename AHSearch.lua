@@ -98,8 +98,18 @@ end
 -- search and handed to everyone waiting for it. levels as AHSearch.Levels returns them.
 function AHSearch.Store(itemID, levels)
   if not itemID or not levels then return end
-  last[itemID] = { list = levels, t = time() }
+  last[itemID] = ns.AuctionHouse.Tag({ list = levels, t = time() })
   deliver(itemID, levels)
+end
+
+-- Results belong to the house they were searched at: forgotten when another house opens.
+ns.AuctionHouse.OnChange(function() last = {} end)
+
+-- House and auctioneer of the item's last search ("A"/"N"/"H", npc id); nil if none.
+function AHSearch.Source(itemID)
+  local l = last[itemID]
+  if not l then return nil end
+  return l.ah, l.npc
 end
 
 -- The sniper's search for the item got no answer.

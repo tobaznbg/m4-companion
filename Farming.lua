@@ -102,7 +102,8 @@ end
 
 function Farming.DataInfo()
   local house = ns.AHData and ns.AHData[HOUSE]
-  return house and house.updated, house and house.hours or 0, ns.db and ns.db.ah and ns.db.ah.currentT, MIN_HOURS
+  local scan = ns.AuctionHouse.Peek()
+  return house and house.updated, house and house.hours or 0, scan and scan.currentT, MIN_HOURS
 end
 
 -- Farm spots ---------------------------------------------------------------

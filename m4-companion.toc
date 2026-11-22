@@ -7,6 +7,7 @@
 ## SavedVariables: M4CompanionDB
 
 Core.lua
+AuctionHouse.lua
 Style.lua
 Item.lua
 Status.lua

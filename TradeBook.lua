@@ -1053,7 +1053,8 @@ local function buildIndex()
   local house = ns.AHData and ns.AHData[113]
   local market = house and house.items or {}
   local scanned = ns.Item and ns.Item.ScannedItems and ns.Item.ScannedItems() or {}
-  local current = ns.db and ns.db.ah and ns.db.ah.current or {}
+  local scan = ns.AuctionHouse.Peek()
+  local current = scan and scan.current or {}
   local cached = C_Item and C_Item.GetItemNameByID
   local function add(id)
     if type(id) ~= "number" or seen[id] then return end

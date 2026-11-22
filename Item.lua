@@ -106,7 +106,7 @@ function Item.Get(itemID)
     bestT = epoch(house.updated) or 0
     e.now, e.offers, e.quantity = row[1], row[7], row[8]
   end
-  local ah = ns.db and ns.db.ah
+  local ah = ns.AuctionHouse.Peek() -- the own scan of the current auction house
   if ah and ah.currentT and ah.currentT > bestT then
     local live = ah.current and ah.current[itemID]
     -- own scan row: { min, marketValue, quantity, offers, sellers }
@@ -140,7 +140,8 @@ end
 -- All offers of the item in the own full scan, cheapest first: { { unit, count }... }, and
 -- the scan time; nil without a scan. (The only place that reads the scan's listings.)
 function Item.Listings(itemID)
-  local last = ns.db and ns.db.ah and ns.db.ah.last
+  local h = ns.AuctionHouse.Peek()
+  local last = h and h.last
   local keys = last and last.items and last.items[itemID]
   if not keys then return nil, last and last.t end
   local list = {}
@@ -226,7 +227,8 @@ end
 
 -- Items in the own full scan (itemID -> true).
 function Item.ScannedItems()
-  local last = ns.db and ns.db.ah and ns.db.ah.last
+  local h = ns.AuctionHouse.Peek()
+  local last = h and h.last
   return last and last.items or {}
 end
 
@@ -234,6 +236,9 @@ end
 function Item.Observe(itemID, cheapest, t)
   observed[itemID] = { now = cheapest, t = t or (time and time()) or 0 }
 end
+
+-- What single searches saw belongs to the house they were made at: forgotten on a switch.
+ns.AuctionHouse.OnChange(function() observed = {} end)
 
 -- R and its source from the medians of an item table (see the head of this file).
 -- R: the median of the 7 days (one odd day moves it little) once it rests on at least 3 days,
