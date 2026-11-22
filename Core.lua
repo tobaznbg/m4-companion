@@ -96,9 +96,113 @@ end)
 
 -- Utilities ----------------------------------------------------------------
 
-function ns.CharKey()
-  return (UnitName("player") or "?") .. "-" .. (GetRealmName() or "?")
+-- The realm of a character key. Since the client update of 21 Nov 2026 (Forever 1.60.1)
+-- GetRealmName() answers "" - the keys became "Lok-" and every per-character table split.
+-- Then the realm this character was stored under before (the newest "Name-Realm" key of
+-- db.chars with that name), else the last realm the game named (db.realm).
+local realmCache
+local function storedRealm(name)
+  local db = ns.db
+  if not db then return nil end
+  local best, bestT
+  for key, c in pairs(db.chars or {}) do
+    local n, r = key:match("^(.-)%-(.+)$")
+    if n == name and r and r ~= "" then
+      local t = type(c) == "table" and c.updated or 0
+      if not best or t > bestT then best, bestT = r, t end
+    end
+  end
+  return best or db.realm
 end
+
+local function realmName()
+  local r = GetRealmName and GetRealmName()
+  if type(r) == "string" and r ~= "" then
+    realmCache = r
+    if ns.db then ns.db.realm = r end
+    return r
+  end
+  if realmCache then return realmCache end
+  r = storedRealm(UnitName and UnitName("player"))
+  if r then realmCache = r end
+  return r
+end
+
+function ns.CharKey()
+  return (UnitName("player") or "?") .. "-" .. (realmName() or "?")
+end
+
+-- One-time repair of what was stored under "Name-" (empty realm) since that client update:
+-- merged into the character's "Name-Realm" entries (ledger events without doubles, the newer
+-- character snapshot, bags/bank/auctions/scans by their times), then the short keys go.
+local function repairEmptyRealm()
+  local db, Sync = ns.db, ns.CloudSync
+  if not (db and Sync) then return end
+  local function target(short)
+    local name = short:match("^(.-)%-$")
+    local r = name and storedRealm(name)
+    return r and (name .. "-" .. r) or nil
+  end
+  local function shortKeys(t, pattern)
+    local list = {}
+    for key in pairs(t or {}) do if type(key) == "string" and key:match(pattern) then list[#list + 1] = key end end
+    return list
+  end
+  local moved = 0
+  for _, key in ipairs(shortKeys(db.ledger, "^.-%-$")) do
+    local full = target(key)
+    if full then
+      local src = db.ledger[key]
+      db.ledger[full] = db.ledger[full] or { events = {} }
+      db.ledger[full].events = db.ledger[full].events or {}
+      Sync.MergeEvents(db.ledger[full].events, src.events or {}, ns.Ledger and ns.Ledger.KEEP or 3000)
+      db.ledger[key] = nil
+      moved = moved + 1
+    end
+  end
+  for _, key in ipairs(shortKeys(db.chars, "^.-%-$")) do
+    local full = target(key)
+    if full then
+      local merged = Sync.MergeChar(db.chars[full], db.chars[key])
+      if merged then db.chars[full] = merged end
+      db.chars[key] = nil
+    end
+  end
+  for _, key in ipairs(shortKeys(db.inventory, "^.-%-$")) do
+    local full = target(key)
+    if full then
+      local src, dst = db.inventory[key], db.inventory[full] or {}
+      for _, part in ipairs({ "bags", "bank" }) do
+        if (src[part .. "T"] or 0) > (dst[part .. "T"] or 0) then dst[part], dst[part .. "T"] = src[part], src[part .. "T"] end
+      end
+      db.inventory[full], db.inventory[key] = dst, nil
+    end
+  end
+  for _, key in ipairs(shortKeys(db.owned, "^.-%-$")) do
+    local full = target(key)
+    if full then
+      if not db.owned[full] or (db.owned[key].t or 0) > (db.owned[full].t or 0) then db.owned[full] = db.owned[key] end
+      db.owned[key] = nil
+    end
+  end
+  for _, key in ipairs(shortKeys(db.recipes, "^.-%-:.+$")) do
+    local short, prof = key:match("^(.-%-):(.+)$")
+    local full = short and target(short)
+    if full then
+      local fk = full .. ":" .. prof
+      if not db.recipes[fk] or (db.recipes[key].t or 0) > (db.recipes[fk].t or 0) then db.recipes[fk] = db.recipes[key] end
+      db.recipes[key] = nil
+    end
+  end
+  for _, session in ipairs(db.sessions or {}) do
+    if type(session.char) == "string" and session.char:match("^.-%-$") then session.char = target(session.char) or session.char end
+  end
+  if moved > 0 then
+    print("|cff33ccffm4:|r Handelsbuch repariert: Einträge seit dem Spiel-Update (Realm fehlte) zusammengeführt.")
+  end
+end
+ns.RepairEmptyRealm = repairEmptyRealm
+ns.OnReady(function() ns.Safe(repairEmptyRealm) end)
 
 local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:0:0:2:0|t"
 local SILVER_ICON = "|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t"
