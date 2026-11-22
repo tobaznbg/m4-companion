@@ -84,6 +84,9 @@ ns.OnReady(function() ns.Safe(create) end)
 -- (0..255). Sent only when it changes; otherwise the band stands still. Off by default;
 -- /m4 strip toggles (ns.db.ui.liveStrip). Pixel exact: a cell = CELL x CELL physical pixels.
 local CELL, ROWS = 3, 2
+-- Switched off (22 Nov 2026): the test worked (112 packets, none lost); kept for later, but
+-- neither /m4 strip nor a stored setting can show it while this is false.
+local LIVE_STRIP_ENABLED = false
 local GOLD = { 196, 156, 64 } -- base gold (0..255); the shades go up to +7 per channel
 local strip
 local seq, phase, lastPayload = 0, 0, nil
@@ -178,6 +181,10 @@ local function showStrip(on)
 end
 
 function ns.ToggleLiveStrip()
+  if not LIVE_STRIP_ENABLED then
+    print("|cff33ccffm4:|r Der Live-Streifen ist abgeschaltet.")
+    return
+  end
   ns.db.ui = ns.db.ui or {}
   ns.db.ui.liveStrip = not ns.db.ui.liveStrip
   showStrip(ns.db.ui.liveStrip)
@@ -185,5 +192,5 @@ function ns.ToggleLiveStrip()
 end
 
 ns.On("PLAYER_ENTERING_WORLD", function()
-  if ns.db and ns.db.ui and ns.db.ui.liveStrip then ns.Safe(showStrip, true) end
+  if LIVE_STRIP_ENABLED and ns.db and ns.db.ui and ns.db.ui.liveStrip then ns.Safe(showStrip, true) end
 end)
