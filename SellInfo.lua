@@ -446,6 +446,21 @@ function SellInfo.AuctionValues(id, unit, qty)
     profit >= 0 and ("|cff5fd38d+" .. fmt(profit) .. "|r") or ("|cffff6b6b-" .. fmt(-profit) .. "|r")
 end
 
+-- Unit price of a row in the "Auktionen" tab. An active auction carries the price per unit in
+-- buyoutAmount; a sold one ("Verkauft:") carries what the whole stack brought, so it is split
+-- over the quantity.
+local function isSold(d)
+  local e = Enum and Enum.AuctionStatus
+  local sold = e and e.Sold or 1 -- Retail: Active 0, Sold 1
+  return d.status ~= nil and d.status == sold
+end
+
+function SellInfo.RowUnit(d)
+  local buyout, qty = d.buyoutAmount, d.quantity or 1
+  if buyout and qty > 1 and isSold(d) then return buyout / qty end
+  return buyout
+end
+
 local probed = false
 local function updateAuctionRows(af)
   local list = auctionsList(af)
@@ -457,14 +472,14 @@ local function updateAuctionRows(af)
     local cells = rawget(row, "cells")
     if SellInfo.columns and type(cells) == "table" and cells[2] and cells[3] then
       local costText, profitText = "", ""
-      if id then costText, profitText = SellInfo.AuctionValues(id, d.buyoutAmount, d.quantity) end
+      if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
       cellText(cells[2]):SetText(costText or "")
       cellText(cells[3]):SetText(profitText or "")
       if row.m4Info then row.m4Info:SetText("") end
     else
       local text
       if id and not ((d.bidAmount or 0) > 0) then
-        text = SellInfo.AuctionText(id, d.buyoutAmount, d.quantity)
+        text = SellInfo.AuctionText(id, SellInfo.RowUnit(d), d.quantity)
       end
       local fs = row.m4Info
       if text or fs then rowText(row):SetText(text or "") end

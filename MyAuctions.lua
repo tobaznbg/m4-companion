@@ -164,8 +164,13 @@ function My.Supported() return api.QueryOwnedAuctions ~= nil and api.GetOwnedAuc
 
 -- Unit price of an own auction. Commodities: buyoutAmount is taken as the price per unit;
 -- if the search shows an own level at buyout / quantity instead, that one is used.
+-- A sold auction carries what the whole stack brought: buyout / quantity.
 local function unitOf(a, offers)
   local unit = a.buyout
+  if a.sold then
+    if unit and a.quantity and a.quantity > 1 then unit = math.floor(unit / a.quantity + 0.5) end
+    return unit
+  end
   if unit and a.quantity and a.quantity > 1 and offers then
     local perUnit = math.floor(unit / a.quantity + 0.5)
     local atBuyout, atPerUnit = false, false
