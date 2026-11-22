@@ -168,7 +168,7 @@ end
 local function auctionRows() return TradeBook.AuctionRows() end
 
 local KINDS = { buy = "Kauf", sale = "Verkauf", vendor = "Händler", post = "Eingestellt", expired = "Abgelaufen",
-  cancelled = "Abgebrochen", craft = "Hergestellt" }
+  cancelled = "Abgebrochen", craft = "Hergestellt", trade = "Handel" }
 
 -- The last 20 trades (all of them: the "Handelsbuch" tab).
 local function tradeRows()
@@ -190,11 +190,26 @@ local function tradeRows()
     elseif e.k == "sale" then amount = GREEN .. "+" .. money((e.c or 0) - (e.cut or 0)) .. "|r"
     elseif e.k == "vendor" then amount = GREEN .. "+" .. money(e.c) .. "|r"
     elseif e.k == "post" and e.p then amount = MUTED .. money(e.p * (e.u or 1)) .. "|r" end
+    local name = e.n or (e.i and ns.ItemName(e.i)) or "?"
+    local units = tostring(e.u or 1)
+    if e.k == "trade" then
+      -- the trade window: with whom, what went each way; gold as the amount
+      name = "Handel mit " .. (e.with or "?") .. (e.own and (MUTED .. " (eigener Char)|r") or "")
+      local parts = {}
+      for _, it in ipairs(e.give or {}) do parts[#parts + 1] = RED .. "-" .. it.n .. "× " .. (ns.ItemName(it.i) or "?") .. "|r" end
+      for _, it in ipairs(e.get or {}) do parts[#parts + 1] = GREEN .. "+" .. it.n .. "× " .. (ns.ItemName(it.i) or "?") .. "|r" end
+      if #parts > 0 then name = name .. "  " .. table.concat(parts, ", ") end
+      local net = (e.gr or 0) - (e.gg or 0)
+      amount = net > 0 and (GREEN .. "+" .. money(net) .. "|r") or (net < 0 and (RED .. "-" .. money(-net) .. "|r") or (MUTED .. "Tausch|r"))
+      units = MUTED .. "–|r"
+    elseif e.src == "trade" and e.with then
+      name = name .. MUTED .. "  · Handel mit " .. e.with .. "|r"
+    end
     local whoText = (many and x.who and x.who ~= me) and (MUTED .. "  · " .. (x.who:match("^([^-]+)") or x.who) .. "|r") or ""
-    out[#out + 1] = { itemID = e.i, icon = iconOf(e.i),
-      (e.n or (e.i and ns.ItemName(e.i)) or "?") .. whoText,
+    out[#out + 1] = { itemID = e.i, icon = e.k == "trade" and "Interface\\Icons\\INV_Misc_Coin_01" or iconOf(e.i),
+      name .. whoText,
       MUTED .. date("%d.%m. %H:%M", e.t or 0) .. "|r  " .. (KINDS[e.k] or tostring(e.k)),
-      tostring(e.u or 1), amount }
+      units, amount }
   end
   return out
 end

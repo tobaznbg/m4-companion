@@ -6,6 +6,10 @@
 --   craft      the player made an item (see "Crafting" below)
 --   vendor     sold to a merchant (c: what the merchant paid, no cut); a buyback removes it
 --   buy with src = "vendor": bought from a merchant (BuyMerchantItem; c what was paid)
+--   trade      a completed trade window: with (the other player), gg / gr gold given / received,
+--              give / get = { { i, n }… } items given / received, own = 1 between household
+--              characters. Items for gold also become buy / sale entries with src = "trade"
+--              (the gold split by the items' market value), so they count in the profit.
 -- Mails stay in the inbox until taken, so every scan sees them again. A mail counts
 -- once: same kind, item, amount and count and a receive time within MAIL_SLACK of
 -- an entry already logged is the same mail.
@@ -559,6 +563,84 @@ end
 if ns.On then
   ns.On("MERCHANT_SHOW", function() merchantOpen, visitSales = true, {} end)
   ns.On("MERCHANT_CLOSED", function() merchantOpen, visitSales = false, {} end)
+end
+
+-- Trade window ------------------------------------------------------------------------------
+-- The last state of the trade window is kept on every change; when the game reports the trade
+-- complete it is logged (see "trade" above). The window can close before or after that message.
+local trade
+
+local function tradeItems(linkOf, infoOf)
+  local list = {}
+  for slot = 1, 6 do -- slot 7: "will not be traded"
+    local link = linkOf and linkOf(slot)
+    local id = link and tonumber(link:match("item:(%d+)"))
+    if id then
+      local _, _, count = infoOf(slot)
+      list[#list + 1] = { i = id, n = count or 1 }
+    end
+  end
+  return list
+end
+
+local function snapshotTrade()
+  if not trade then return end
+  trade.give = tradeItems(GetTradePlayerItemLink, GetTradePlayerItemInfo)
+  trade.get = tradeItems(GetTradeTargetItemLink, GetTradeTargetItemInfo)
+  trade.gg = GetPlayerTradeMoney and GetPlayerTradeMoney() or 0
+  trade.gr = GetTargetTradeMoney and GetTargetTradeMoney() or 0
+end
+
+-- Market value of items, for splitting a trade's gold among them.
+local function worth(list)
+  local total, each = 0, {}
+  for k, it in ipairs(list) do
+    local m = ns.Item and ns.Item(it.i) or {}
+    local v = (m.ref or m.now or m.vendorSell or 1) * it.n
+    each[k], total = v, total + v
+  end
+  return each, total
+end
+
+local function recordTrade(s)
+  if #s.give == 0 and #s.get == 0 and s.gg == 0 and s.gr == 0 then return end
+  local own
+  for _, key in ipairs(Ledger.Household and Ledger.Household() or {}) do
+    if key:match("^([^-]+)") == s.with then own = 1 end
+  end
+  add({ k = "trade", with = s.with, gg = s.gg, gr = s.gr, give = s.give, get = s.get, own = own })
+  if own then return end
+  -- items for gold: purchases or sales at that gold
+  local net = s.gr - s.gg
+  if #s.get > 0 and #s.give == 0 and net < 0 then
+    local each, total = worth(s.get)
+    for k, it in ipairs(s.get) do
+      add({ k = "buy", i = it.i, u = it.n, c = math.floor(-net * each[k] / total + 0.5), src = "trade", with = s.with })
+    end
+  elseif #s.give > 0 and #s.get == 0 and net > 0 then
+    local each, total = worth(s.give)
+    for k, it in ipairs(s.give) do
+      add({ k = "sale", i = it.i, u = it.n, c = math.floor(net * each[k] / total + 0.5), cut = 0, src = "trade", with = s.with })
+    end
+  end
+end
+
+if ns.On then
+  ns.On("TRADE_SHOW", function() trade = { with = UnitName and UnitName("NPC") or "?" }; ns.Safe(snapshotTrade) end)
+  for _, ev in ipairs({ "TRADE_PLAYER_ITEM_CHANGED", "TRADE_TARGET_ITEM_CHANGED", "TRADE_MONEY_CHANGED", "TRADE_ACCEPT_UPDATE" }) do
+    ns.On(ev, function() ns.Safe(snapshotTrade) end)
+  end
+  ns.On("UI_INFO_MESSAGE", function(_, _, message)
+    if trade and message == ERR_TRADE_COMPLETE then
+      local s = trade
+      trade = nil
+      ns.Safe(recordTrade, s)
+    end
+  end)
+  ns.On("TRADE_CLOSED", function()
+    local s = trade
+    if C_Timer then C_Timer.After(2, function() if trade == s then trade = nil end end) end
+  end)
 end
 
 -- All events of this character, oldest first (read only; Profit.lua replays them).
