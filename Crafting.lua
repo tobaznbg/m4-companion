@@ -28,6 +28,7 @@ local SOURCES = { ["6"] = "Lehrer", ["5"] = "Händler", ["2"] = "Drop", ["4"] = 
 -- "Lehrer ab 165 (24s)", "Händler/Drop ab 140" etc., and the skill needed.
 local function learnInfo(professionID, recipeID)
   local data = ns.DataBySkillLine and ns.DataBySkillLine[professionID]
+  if not data then data = ns.SkillData and ns.SkillData[professionID] and ns.SkillData[professionID].recipes end
   local d = data and data[recipeID]
   if not d then return "unbekannt", nil end
   local parts = {}
@@ -73,6 +74,23 @@ local function knowerOf(professionID)
 end
 ns.ProfessionKnower = knowerOf
 
+-- The recipe's spell id from the crafted item (Data_Skill.lua): Data_Recipes has the Blizzard
+-- API's recipe ids, the scans, the recipe sources and the skill data spell ids. Cached per
+-- profession; nil if the skill data does not know the item.
+local spellIndex = {}
+local function spellByItem(professionID, itemID)
+  local idx = spellIndex[professionID]
+  if not idx then
+    idx = {}
+    local skill = ns.SkillData and ns.SkillData[professionID]
+    for spell, d in pairs(skill and skill.recipes or {}) do
+      if d.out and not idx[d.out] then idx[d.out] = spell end
+    end
+    spellIndex[professionID] = idx
+  end
+  return itemID and idx[itemID]
+end
+
 -- All recipes of one profession (Data_Recipes.lua) that make an item, priced via ns.Item; learned
 -- state and skill from charKey's scan (default: the own character).
 local function rows(filter, professionID, charKey)
@@ -105,14 +123,16 @@ local function rows(filter, professionID, charKey)
         if filter ~= "profit" or ((profit or 0) > 0 and onAH) then
           local learn, need = nil, nil
           if not learned then
-            if known then learn, need = learnInfo(professionID, known.id) else learn = "Quelle ?" end
+            -- no scan of it: the spell id through the crafted item (sources, skill, trainer)
+            local spell = known and known.id or spellByItem(professionID, out)
+            if spell then learn, need = learnInfo(professionID, spell) else learn = "Quelle ?" end
           end
           local rank = mine and mine.scan.rank or 0
           local tooHigh = not learned and (not mine or (need and need > rank)) or false
           -- 0 learned, 1 learnable now, 2 later: what can be made now comes first.
           local group = learned and 0 or (tooHigh and 2 or 1)
           table.insert(list, { itemID = out, recipe = rec[1], profession = data.name,
-            cat = known and known.r.cat, scat = rec[5], spell = known and known.id or rid, pid = professionID,
+            cat = known and known.r.cat, scat = rec[5], spell = known and known.id or spellByItem(professionID, out) or rid, pid = professionID,
             score = (2 - group) * 1e12 + (profit or -1e11), learned = learned, unpriced = unpriced, learn = learn, tooHigh = tooHigh,
             unsure = ns.Item.Unsure(ns.Item(out)), nowPrice = ns.Item(out).now,
             cost = cost, unitCost = cost / quantity, value = value, profit = profit, onAH = onAH, demand = ns.Item(out).demand or 0,
