@@ -850,7 +850,7 @@ local function productEntries(pid)
       -- not learned: the name greyed, like a recipe out of reach
       color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e,
       -- the profit per craft right in the row (the name is cut before it)
-      value = (e.profit and e.onAH) and ((e.profit >= 0 and "|cff5fd38d+" or "|cffff6b6b-") .. money(math.abs(e.profit)) .. "|r") or nil }
+      value = (e.profit and e.onAH) and ((e.profit >= 0 and "|cff5fd38d+" or "|cffff6b6b-") .. money(math.floor(math.abs(e.profit) + 0.5)) .. "|r") or nil }
   end
   -- another player's profession window: what they know is not known here, so nothing is
   -- shown as locked
