@@ -821,6 +821,15 @@ end
 --   spec.balanceLabels    labels of the balance (values: data.balance)
 --   spec.collect()        -> { groups = { { key, name, icon, value, values, items = { { itemID, name,
 --                            icon, sub, cols, values } } } }, balance = { … } }
+-- Labels and values into a figures block (rows without a label hidden).
+local function setFigures(fig, labels, values)
+  for i, fs in ipairs(fig.values) do
+    local has = labels[i] ~= nil
+    fig.labels[i]:SetShown(has); fs:SetShown(has)
+    fig.labels[i]:SetText(labels[i] or ""); fs:SetText(values[i] or "–")
+  end
+end
+
 local function buildGrouped(page, spec)
   local NW = ns.NativeWindow
   local area, item, current
@@ -862,7 +871,7 @@ local function buildGrouped(page, spec)
     item.itemID = it.itemID
     item.Name:SetText(it.name)
     item.Sub:SetText(it.sub or "")
-    for i, fs in ipairs(item.Figures.values) do fs:SetText(it.values[i] or "–") end
+    setFigures(item.Figures, it.labels or spec.itemLabels, it.values)
   end
   local function showGroup(g)
     current = g
@@ -872,7 +881,7 @@ local function buildGrouped(page, spec)
     area.itemID = nil
     area.Name:SetText(g.name)
     area.Sub:SetText("Zusammenfassung")
-    for i, fs in ipairs(area.Figures.values) do fs:SetText(g.values[i] or "–") end
+    setFigures(area.Figures, g.labels or spec.groupLabels, g.values)
     local rows = {}
     for _, it in ipairs(g.items) do
       local row = { itemID = it.itemID, icon = it.icon, onClick = function() showItem(it) end }
@@ -950,7 +959,9 @@ local function pctText(gain, cost)
   return string.format("%+d %%", math.floor(gain / cost * 100 + 0.5))
 end
 
--- "Bestand": what the character holds, by where it comes from (trade, each profession).
+-- "Bestand": what the character holds, by where it comes from (trade, each profession), and the
+-- gold of every character of the household (cash is stock too).
+local collectGold -- below, next to its helpers
 local function collectStock()
   local P = ns.Profit
   local report = P and P.Report and P.Report(nil) or { stock = {} }
@@ -984,7 +995,10 @@ local function collectStock()
     g.values = { string.format("%d Items · %d Stück", #g.items, g.units), money(g.cost), money(g.sell),
       pctText(g.gain, g.cost), signed(g.gain) }
   end
-  return { groups = order, balance = { money(total.cost), money(total.sell), signed(total.gain) } }
+  local gold = collectGold and collectGold()
+  if gold then table.insert(order, 1, gold) end
+  local cash = gold and gold.total or 0
+  return { groups = order, balance = { money(cash), money(total.cost), money(cash + total.cost), signed(total.gain) } }
 end
 
 local function buildStock(page)
@@ -993,7 +1007,7 @@ local function buildStock(page)
     groupLabels = { "Bestand", "Einkauf", "Erlös (nach Gebühr)", "Marge", "Buchgewinn" },
     itemLabels = { "Stück", "Einkauf / Stk.", "Einkauf", "Erlös / Stk.", "Erlös", "Marge", "Buchgewinn" },
     listCols = { { "Item", 20, "LEFT", 190 }, { "Stück", 245, "RIGHT" }, { "Buchgewinn", 315, "RIGHT" } },
-    balanceLabels = { "Einkauf", "Erlös", "Buchgewinn" },
+    balanceLabels = { "Gold", "Ware (Einkauf)", "Zusammen", "Buchgewinn Ware" },
     collect = collectStock,
   })
 end
@@ -1182,68 +1196,35 @@ local function auctionWorth(key)
   return sum, n
 end
 
-local function buildGold(page)
-  local NW = ns.NativeWindow
-  local LABELS = { "Gold", "Anteil", "In Auktionen", "Zusammen", "Stand" }
-  local view
-  local split = NW.Split(page, {
-    footer = 22 + 3 * 15 + 16,
-    onSelect = function(entry, c)
-      if not view then
-        view = head(c)
-        view.Figures = NW.Figures(c, view.Head, LABELS)
-        local function widths(fr) view.Figures.SetWidth(math.max(100, (fr:GetWidth() or 340) - 46)) end
-        widths(c)
-        c:HookScript("OnSizeChanged", widths)
-      end
-      local ch = entry and entry.ch
-      for _, part in ipairs({ view.Icon, view.Name, view.Sub, view.Head }) do part:SetShown(ch ~= nil) end
-      for i, fs in ipairs(view.Figures.values) do fs:SetShown(ch ~= nil); view.Figures.labels[i]:SetShown(ch ~= nil) end
-      if view.Figures.line then view.Figures.line:SetShown(ch ~= nil) end
-      if not ch then return end
-      view.Icon:SetTexture(ch.icon)
-      view.itemID = nil
-      view.Name:SetText(ch.name)
-      view.Sub:SetText(ch.sub)
-      for i, fs in ipairs(view.Figures.values) do fs:SetText(ch.values[i] or "–") end
-    end,
-  })
-  local balance
-  if split.footer then
-    local title = split.footer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", 6, -8)
-    title:SetText("Bilanz")
-    balance = NW.Figures(split.footer, title, { "Gold", "In Auktionen", "Zusammen" }, { gap = 6, step = 15 })
-    balance.SetWidth(math.max(100, (split.footer:GetWidth() or 280) - 14))
-    split.footer:HookScript("OnSizeChanged", function(f) balance.SetWidth(math.max(100, (f:GetWidth() or 280) - 14)) end)
+-- The gold group of the stock page: every character with its gold and the gold bound in its
+-- running auctions.
+collectGold = function()
+  local me = ns.CharKey and ns.CharKey()
+  local list, total, bound = {}, 0, 0
+  for _, key in ipairs(household()) do
+    local gold, goldT = goldOf(key)
+    local worth, n = auctionWorth(key)
+    total, bound = total + gold, bound + worth
+    list[#list + 1] = { key = key, gold = gold, goldT = goldT, worth = worth, n = n, c = ns.db and ns.db.chars and ns.db.chars[key] or {} }
   end
-  function page.Refresh()
-    local me = ns.CharKey and ns.CharKey()
-    local list, total, bound = {}, 0, 0
-    for _, key in ipairs(household()) do
-      local c = ns.db and ns.db.chars and ns.db.chars[key] or {}
-      local gold, goldT = goldOf(key)
-      local worth, n = auctionWorth(key)
-      total, bound = total + gold, bound + worth
-      list[#list + 1] = { key = key, gold = gold, goldT = goldT, worth = worth, n = n, c = c }
-    end
-    table.sort(list, function(x, y) return x.gold > y.gold end)
-    local entries = { { key = "gold", header = "Charaktere" } }
-    for _, x in ipairs(list) do
-      local c = x.c
-      local icon = c.class and (CLASS_ICON .. c.class:sub(1, 1) .. c.class:sub(2):lower()) or ICON
-      local stand = x.key == me and "jetzt (spielt)" or ago(x.goldT)
-      local ch = { icon = icon, name = fullName(x.key),
-        sub = string.format("Stufe %s %s", tostring(c.level or "?"), c.className or ""),
-        values = { money(x.gold), total > 0 and string.format("%d %%", math.floor(x.gold / total * 100 + 0.5)) or "–",
-          x.n > 0 and string.format("%s  " .. MUTED .. "(%d)|r", money(x.worth), x.n) or "–", money(x.gold + x.worth), stand } }
-      entries[#entries + 1] = { key = x.key, name = fullName(x.key), icon = icon, value = money(x.gold), ch = ch }
-    end
-    split.SetEntries(entries)
-    if balance then
-      balance.values[1]:SetText(money(total)); balance.values[2]:SetText(money(bound)); balance.values[3]:SetText(money(total + bound))
-    end
+  table.sort(list, function(x, y) return x.gold > y.gold end)
+  local items = {}
+  for _, x in ipairs(list) do
+    local c = x.c
+    local icon = c.class and (CLASS_ICON .. c.class:sub(1, 1) .. c.class:sub(2):lower()) or ICON
+    local name = fullName(x.key)
+    items[#items + 1] = { key = "gold:" .. x.key, icon = icon, name = name,
+      sub = string.format("Stufe %s %s", tostring(c.level or "?"), c.className or ""),
+      cols = { name, "", money(x.gold) },
+      labels = { "Gold", "Anteil", "In Auktionen", "Zusammen", "Stand" },
+      values = { money(x.gold), total > 0 and string.format("%d %%", math.floor(x.gold / total * 100 + 0.5)) or "–",
+        x.n > 0 and string.format("%s  " .. MUTED .. "(%d)|r", money(x.worth), x.n) or "–", money(x.gold + x.worth),
+        x.key == me and "jetzt (spielt)" or ago(x.goldT) } }
   end
+  return { key = "gold", name = "Gold", icon = "Interface\\Icons\\INV_Misc_Coin_01", items = items, total = total,
+    value = money(total),
+    labels = { "Gold (bar)", "In Auktionen gebunden", "Zusammen", "Charaktere" },
+    values = { money(total), money(bound), money(total + bound), tostring(#items) } }
 end
 
 -- "Marktsuche" (magnifier tab): one search line like a search engine over every item the addon
@@ -1565,8 +1546,6 @@ local function create()
     build = buildStock, onShow = onTab("stock") })
   window:AddTab({ key = "auctions", title = "Auktionen", icon = "Interface\\Icons\\INV_Hammer_15",
     build = buildAuctions, onShow = onTab("auctions", function(page) refreshPage(page); ns.Safe(TradeBook.CheckAuctions) end) })
-  window:AddTab({ key = "gold", title = "Gold", icon = "Interface\\Icons\\INV_Misc_Coin_01",
-    build = buildGold, onShow = onTab("gold") })
   window:AddTab({ key = "search", title = "Marktsuche", icon = SEARCH_TAB_ICON, overview = true,
     build = buildSearch, onShow = onTab("search") })
   -- under the search: Dr. Porzellan's toilet break planner, only with "Min-Max-Optimierung" (Boxenstopp.lua)
@@ -1646,7 +1625,7 @@ function TradeBook.Frame() return window and window.frame end
 ns.On("PLAYER_MONEY", function()
   local c = ns.db and ns.db.chars and ns.CharKey and ns.db.chars[ns.CharKey()]
   if c and GetMoney then c.money, c.moneyT = GetMoney(), time() end
-  if window and window.frame:IsShown() and (window.current == "gold" or window.current == "overview") then refreshCurrent() end
+  if window and window.frame:IsShown() and (window.current == "stock" or window.current == "overview") then refreshCurrent() end
 end)
 
 -- Own auctions changed (MyAuctions: list or a search result): the shown page follows.
