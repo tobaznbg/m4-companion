@@ -301,20 +301,11 @@ function Item.GuildSaleText(e, short)
 end
 
 function Item.SellNet(e)
-  -- Sustained price: undercut the cheapest offer, above R (median, see Item.Reference) only
-  -- with high demand (below).
+  -- The current price: undercut the cheapest offer now (it carries every trend). Only an offer
+  -- more than 50 % above R (median, see Item.Reference) is no market (one seller asking far
+  -- too much, shown as "unsicher"): then R. Without an offer now: R.
   local base = e.now and (e.now - 1) or e.ref
-  -- above R only with high demand ("hoch" and up) and at most 25 % above it: then the offers
-  -- now really sell (they go fast); otherwise one seller far above R does not make it sellable
-  if base and e.ref then
-    local hot = (e.demand or 0) >= 5 and base <= e.ref * 1.25
-    if not hot then base = math.min(base, e.ref) end
-  end
-  -- falling price (trend below 0) while the price is not above R: what it brings when sold
-  -- later is less - the trend taken off (at most 30 %); a rising price adds nothing
-  if base and e.trend and e.trend < 0 and not (e.now and e.ref and e.now > e.ref) then
-    base = base * (1 + math.max(e.trend, -0.3))
-  end
+  if base and e.ref and e.now and e.now > e.ref * 1.5 then base = e.ref end
   local ah = base and base > 0 and math.floor(base * (1 - CUT)) or 0
   local vendor = e.vendorSell or 0
   if ah > 0 and ah >= vendor then return ah, true end
