@@ -662,6 +662,43 @@ end
 
 -- What the character really holds of an item: bags, bank (once seen) and own running
 -- auctions. nil when the bank was never opened (then nothing is capped).
+-- Sold auctions whose sale mail is not in the ledger yet ("unterwegs"), over the household:
+-- { [itemID] = { n = units, value = what they bring after the cut } }. A sold entry of the own
+-- auction list (MyAuctions, s = 1) counts until sales of the item are booked from about an hour
+-- before that list was read (the mail comes about an hour after the sale).
+function Profit.Transit()
+  local out = {}
+  local keys = ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}
+  local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
+  for _, key in ipairs(keys) do
+    local owned = ns.db.owned and ns.db.owned[key]
+    for _, a in ipairs(owned and owned.list or {}) do
+      if a.i and a.s then
+        local t = out[a.i] or { n = 0, value = 0, since = owned.t or 0 }
+        local q = a.q or 1
+        local gross = (a.u and a.u * q) or a.b or 0
+        t.n, t.value = t.n + q, t.value + math.floor(gross * 0.95 + 0.5)
+        t.since = math.min(t.since, owned.t or 0)
+        out[a.i] = t
+      end
+    end
+  end
+  for id, t in pairs(out) do
+    local booked = 0
+    for i = #events, 1, -1 do
+      local e = events[i]
+      if (e.t or 0) < t.since - 3700 then break end
+      if e.k == "sale" and idOf(e) == id and not e.src then booked = booked + (e.u or 1) end
+    end
+    if booked >= t.n then out[id] = nil
+    elseif booked > 0 then
+      t.value = math.floor(t.value * (t.n - booked) / t.n + 0.5)
+      t.n = t.n - booked
+    end
+  end
+  return out
+end
+
 local function heldCounts(household)
   -- bags, bank (once seen) and running auctions of every character of the household; nil when a
   -- character's bank was never opened (then nothing is capped)
@@ -684,6 +721,8 @@ local function heldCounts(household)
       if a.i and not a.s then held[a.i] = (held[a.i] or 0) + (a.q or 1) end
     end
   end
+  -- sold, the mail not booked yet ("unterwegs"): still the household's until the sale is booked
+  for id, t in pairs(Profit.Transit()) do held[id] = (held[id] or 0) + t.n end
   if single then return held end
   local me = ns.CharKey and ns.CharKey()
   local inv = me and ns.db.inventory and ns.db.inventory[me]

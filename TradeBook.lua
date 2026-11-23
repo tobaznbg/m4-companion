@@ -1018,28 +1018,78 @@ local function collectStock()
   local report = P and P.Report and P.Report(nil) or { stock = {} }
   local groups, order = {}, {}
   local total = { cost = 0, sell = 0, gain = 0, units = 0 }
-  for _, s in ipairs(report.stock or {}) do
-    local maker = (s.source or ""):find("hergestellt") and ns.CraftedBy and ns.CraftedBy(s.itemId)
-    local key = maker or ((s.source or ""):find("hergestellt") and "Hergestellt" or "Handel")
+  -- where the units are: running auctions of the household ("Im Auktionshaus", at the listed
+  -- price after the cut), sold with the mail still to come ("Unterwegs", Profit.Transit), the
+  -- rest by origin (a profession, Hergestellt, Handel)
+  local listed = {}
+  for _, key in ipairs(ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}) do
+    local owned = ns.db.owned and ns.db.owned[key]
+    for _, a in ipairs(owned and owned.list or {}) do
+      if a.i and not a.s then
+        local l = listed[a.i] or { n = 0, value = 0 }
+        local q = a.q or 1
+        l.n = l.n + q
+        l.value = l.value + math.floor(((a.u and a.u * q) or a.b or 0) * 0.95 + 0.5)
+        listed[a.i] = l
+      end
+    end
+  end
+  local transit = P and P.Transit and P.Transit() or {}
+  local function group(key, name, icon)
     local g = groups[key]
     if not g then
-      g = { key = key, name = key, items = {}, units = 0, cost = 0, sell = 0, gain = 0,
-        icon = key == "Handel" and AREA_ICONS.trade or PROFESSION_ICONS[key] or "Interface\\Icons\\INV_Box_02" }
+      g = { key = key, name = name or key, items = {}, units = 0, cost = 0, sell = 0, gain = 0, icon = icon }
       groups[key] = g
       order[#order + 1] = g
     end
-    local name = s.name or ns.ItemName(s.itemId) or ("#" .. s.itemId)
-    g.items[#g.items + 1] = { key = key .. ":" .. s.itemId, itemID = s.itemId, icon = iconOf(s.itemId), name = name,
-      sub = heldBy(s.itemId) ~= "" and heldBy(s.itemId) or (key .. " · " .. (s.source or "")), gain = s.gain or -1e12,
-      cols = { name, tostring(s.units), s.gain and signed(s.gain) or "–" },
-      values = { tostring(s.units), money(s.unitCost), money(s.cost), s.sellUnit and money(s.sellUnit) or "–",
-        s.sell and money(s.sell) or "–", pctText(s.gain, s.cost), s.gain and signed(s.gain) or "–" } }
-    g.units, g.cost = g.units + s.units, g.cost + s.cost
-    if s.sell then g.sell, g.gain = g.sell + s.sell, g.gain + s.gain end
-    total.units, total.cost = total.units + s.units, total.cost + s.cost
-    if s.sell then total.sell, total.gain = total.sell + s.sell, total.gain + s.gain end
+    return g
   end
-  table.sort(order, function(a, b) return a.gain > b.gain end)
+  -- n units of stock entry s into group g; sell = what they bring (nil: unknown)
+  local function put(g, s, n, sell, sub)
+    if n <= 0 then return end
+    local cost = s.units > 0 and s.cost * n / s.units or 0
+    local gain = sell and (sell - cost) or nil
+    local name = s.name or ns.ItemName(s.itemId) or ("#" .. s.itemId)
+    g.items[#g.items + 1] = { key = g.key .. ":" .. s.itemId, itemID = s.itemId, icon = iconOf(s.itemId), name = name,
+      sub = sub, gain = gain or -1e12,
+      cols = { name, tostring(n), gain and signed(gain) or "–" },
+      values = { tostring(n), money(s.unitCost), money(cost), sell and money(sell / n) or "–",
+        sell and money(sell) or "–", pctText(gain, cost), gain and signed(gain) or "–" } }
+    g.units, g.cost = g.units + n, g.cost + cost
+    if sell then g.sell, g.gain = g.sell + sell, g.gain + gain end
+    total.units, total.cost = total.units + n, total.cost + cost
+    if sell then total.sell, total.gain = total.sell + sell, total.gain + gain end
+  end
+  for _, s in ipairs(report.stock or {}) do
+    local left = s.units
+    local l, t = listed[s.itemId], transit[s.itemId]
+    local nT = t and math.min(left, t.n) or 0
+    put(group("transit", "Unterwegs (verkauft, Post kommt)", "Interface\\Icons\\INV_Letter_15"), s, nT,
+      nT > 0 and t.value * nT / t.n or nil, "verkauft – das Gold kommt mit der Post")
+    left = left - nT
+    local nA = l and math.min(left, l.n) or 0
+    put(group("auction", "Im Auktionshaus", "Interface\\Icons\\INV_Hammer_15"), s, nA,
+      nA > 0 and l.value * nA / l.n or nil, "eingestellt – zum eigenen Preis nach Gebühr")
+    left = left - nA
+    if left > 0 then
+      local maker = (s.source or ""):find("hergestellt") and ns.CraftedBy and ns.CraftedBy(s.itemId)
+      local key = maker or ((s.source or ""):find("hergestellt") and "Hergestellt" or "Handel")
+      local g = group(key, key, key == "Handel" and AREA_ICONS.trade or PROFESSION_ICONS[key] or "Interface\\Icons\\INV_Box_02")
+      put(g, s, left, s.sellUnit and s.sellUnit * left or nil,
+        heldBy(s.itemId) ~= "" and heldBy(s.itemId) or (key .. " · " .. (s.source or "")))
+    end
+  end
+  -- empty location groups out
+  local kept = {}
+  for _, g in ipairs(order) do if #g.items > 0 then kept[#kept + 1] = g end end
+  order = kept
+  -- where it is first (in the mail, in the auction house), then the origins by book gain
+  local RANK = { transit = 1, auction = 2 }
+  table.sort(order, function(a, b)
+    local ra, rb = RANK[a.key] or 9, RANK[b.key] or 9
+    if ra ~= rb then return ra < rb end
+    return a.gain > b.gain
+  end)
   for _, g in ipairs(order) do
     table.sort(g.items, function(a, b) return a.gain > b.gain end)
     g.value = signed(g.gain)
