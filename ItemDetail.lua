@@ -25,6 +25,7 @@ local CHART_H = 96
 local GREEN, ORANGE = "|cff5fd38d", "|cffffb547"
 
 local frame, body, scroll, itemID
+local recipeButton -- "Im Beruf zeigen" under the crafting / recipe lines
 local origin   -- "sniper" when opened from the sniper list at the auction house
 local docked   -- anchor frame while docked at the auction house, nil as a window of its own
 local lines, sections = {}, {}
@@ -889,12 +890,14 @@ render = function()
     end
   end
 
-  -- 5. Crafting (same recipe choice as the tooltip)
+  -- 5. Crafting (same recipe choice as the tooltip), with a button to the recipe in "Alle Produkte"
   local craft = ns.CraftInfo and ns.CraftInfo(itemID)
+  local openPid, openItem
   if craft then
     section("Herstellung")
     line("Herstellkosten / Stück", money(math.floor(craft.cost + 0.5)))
     line("Rezept", craft.prof .. " · " .. craft.source)
+    openPid, openItem = craft.pid, itemID
   end
 
   -- 6. Recipe items (at the end, below the market): what the recipe teaches, what making it costs and brings (Crafting.lua).
@@ -925,6 +928,31 @@ render = function()
         elseif p.trend >= 0.03 then pt = GREEN .. pt .. "|r" end
       end
       line("Trend (Produkt)", pt or "–")
+    end
+    if t.product and t.pid and ns.RecipeData and ns.RecipeData[t.pid] then openPid, openItem = t.pid, t.product end
+  end
+  -- "Im Beruf zeigen": the recipe in "Alle Produkte" (Crafting.lua), right-aligned under the lines
+  if not recipeButton then
+    local ok, b = pcall(CreateFrame, "Button", nil, body, "UIPanelButtonTemplate")
+    if ok and b then
+      b:SetSize(130, 20)
+      b:SetText("Im Beruf zeigen")
+      b:SetScript("OnClick", function(self)
+        if self.pid and ns.Products and ns.Products.ShowItem then ns.Safe(ns.Products.ShowItem, self.pid, self.item) end
+      end)
+      recipeButton = b
+    end
+  end
+  if recipeButton then
+    recipeButton.pid, recipeButton.item = openPid, openItem
+    recipeButton:ClearAllPoints()
+    if openPid and ns.Products and ns.Products.ShowItem then
+      y = y + 6
+      recipeButton:SetPoint("TOPRIGHT", body, "TOPRIGHT", -2, -y)
+      recipeButton:Show()
+      y = y + 22
+    else
+      recipeButton:Hide()
     end
   end
 

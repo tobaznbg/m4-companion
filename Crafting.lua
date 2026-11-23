@@ -1763,6 +1763,25 @@ function Products.Show(pid)
   if productsPID then productsWindow:SelectTab("products") else productsWindow:SelectTab("overview") end
 end
 
+-- "Alle Produkte" of a profession with the recipe that makes itemID selected (button in the
+-- market data window). A filter that hides it is set to everything.
+function Products.ShowItem(pid, itemID)
+  Products.Show(pid)
+  local function find()
+    for _, en in ipairs(productEntries(pid)) do
+      if en.e and en.itemID == itemID then return en end
+    end
+  end
+  local hit = find()
+  if not hit then
+    ns.db.ui = ns.db.ui or {}
+    ns.db.ui.productsFilter, ns.db.ui.productsLevel = "all", "all"
+    refreshProducts()
+    hit = find()
+  end
+  if hit and productsSplit and productsSplit.Select then productsSplit.Select(hit.key) end
+end
+
 -- The overview (button in the profession book): closes the window when it shows the overview.
 function Products.ShowOverview()
   if not productsWindow then createProducts() end
