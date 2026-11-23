@@ -968,7 +968,7 @@ local function recipeItemOf(pid, spell)
   return entry and entry.item
 end
 
-local function sourceLines(pid, spell)
+local function sourceLines(pid, spell, noItem)
   local srcs = ns.RecipeSources and ns.RecipeSources[pid]
   local entry = srcs and srcs.recipes and srcs.recipes[spell]
   if not entry then return nil end
@@ -1031,8 +1031,9 @@ local function sourceLines(pid, spell)
     end
   end
   if entry.q then add("Quest: " .. entry.q) end
-  if entry.item then
-    -- the recipe item at the auction house: cheapest offer and how many
+  if entry.item and not noItem then
+    -- the recipe item at the auction house: cheapest offer and how many (the card shows it as a
+    -- slot instead, noItem)
     local it = ns.Item(entry.item)
     if it.now then
       local n = it.offers or it.quantity
@@ -1235,6 +1236,9 @@ local function productCard(c)
     b:Hide()
     v.MapButtons[i] = b
   end
+  -- the tradeable recipe item (pattern, plans, …) as a slot like the reagents: icon, tooltip,
+  -- Alt+click market data, its price at the auction house
+  v.RecipeSlot = reagentSlot(c)
   v.Head:SetText("Reagenzien:")
   v.reagents = {}
   for i = 1, MAX_REAGENTS do v.reagents[i] = reagentSlot(c) end
@@ -1361,6 +1365,10 @@ local function showProduct(entry, c)
   end
   for _, row in ipairs(v.rows) do row.label:SetShown(shown); row.value:SetShown(shown) end
   for _, r in ipairs(v.reagents) do r.Slot:Hide(); r.Name:Hide(); r.Price:Hide(); r.itemID = nil end
+  do
+    local r = v.RecipeSlot
+    r.Slot:Hide(); r.Name:Hide(); r.Price:Hide(); r.itemID = nil
+  end
   if productsSplit and productsSplit.empty then
     productsSplit.empty:SetText(shown and "" or "Keine Rezepte für diesen Filter.")
   end
@@ -1392,7 +1400,7 @@ local function showProduct(entry, c)
   end
   for _, row in ipairs(v.Spots) do row.Text:Hide(); row.Sub:Hide(); row.Right:Hide(); row.Map:Hide() end
   v.SpotHead:SetShown(e.gather == true)
-  local src = not e.learned and not e.gather and sourceLines(e.pid, e.spell) or nil
+  local src = not e.learned and not e.gather and sourceLines(e.pid, e.spell, true) or nil
   local lastSource
   for i, fs in ipairs(v.SourceLines) do
     local line = src and src[i]
@@ -1402,6 +1410,26 @@ local function showProduct(entry, c)
     local b = v.MapButtons[i]
     b.loc = line and line.loc
     b:SetShown(b.loc ~= nil)
+  end
+  -- the recipe item under the ways to learn it (not learned, tradeable)
+  local recipeItemID = not e.learned and not e.gather and recipeItemOf(e.pid, e.spell)
+  local srcs = recipeItemID and ns.RecipeSources[e.pid]
+  local bop = srcs and srcs.recipes[e.spell] and srcs.recipes[e.spell].bop
+  if recipeItemID and not bop then
+    local r = v.RecipeSlot
+    local it = ns.Item(recipeItemID)
+    r.itemID = recipeItemID
+    r.Icon:SetTexture(itemIcon(recipeItemID))
+    if SetItemButtonQuality then pcall(SetItemButtonQuality, r.Slot, quality(recipeItemID), recipeItemID) end
+    r.Slot:ClearAllPoints()
+    r.Slot:SetPoint("TOPLEFT", lastSource or v.LearnHead or v.Icon, "BOTTOMLEFT", 0, -8)
+    local n = it.offers or it.quantity
+    r.Name:SetText((ns.ItemName(recipeItemID) or ("#" .. recipeItemID))
+      .. (it.now and n and string.format("\n|cff999999%d %s|r", n, n == 1 and "Angebot" or "Angebote") or ""))
+    r.Price:SetText(it.now and (money(it.now) .. "|cff999999  AH|r") or "|cff999999nicht im AH|r")
+    r.Slot:Show(); r.Name:Show(); r.Price:Show()
+    lastSource = r.Slot
+    src = src or {}
   end
   v.LearnHead:SetShown(src ~= nil)
   v.Head:ClearAllPoints()
