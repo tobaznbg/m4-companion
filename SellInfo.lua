@@ -265,7 +265,7 @@ local function onRowFilled(list, fn)
     ScrollUtil.AddInitializedFrameCallback(box, function(row)
       ns.Safe(fn, row)
       C_Timer.After(0, function() ns.Safe(fn, row) end)
-    end, list, false)
+    end, {}, false) -- own owner key: the list may have registered under its own
   elseif type(box) == "table" and box.Update then
     hooksecurefunc(box, "Update", function() forEachRow(list, function(row) ns.Safe(fn, row) end) end)
   end
@@ -444,6 +444,23 @@ local function installColumns(af)
   trace("installOk", ok and true or tostring(err))
 end
 
+-- Our cells are text cells: Blizzard repopulates them (empty) whenever a row is filled, e.g. while
+-- scrolling. Each cell gets a hook on its Populate, so our value is written in the same call,
+-- after Blizzard's. fill(cell, rowData, columnIndex) - the column is looked up each time because
+-- pooled cells can move between columns.
+local function hookCell(cell, fill)
+  if type(cell) ~= "table" or cell.m4Pop or type(cell.Populate) ~= "function" then return end
+  cell.m4Pop = true
+  hooksecurefunc(cell, "Populate", function(self, rowData)
+    local row = self.GetParent and self:GetParent()
+    local cells = row and rawget(row, "cells")
+    if type(cells) ~= "table" then return end
+    for i, c in ipairs(cells) do
+      if c == self then ns.Safe(fill, self, rowData, i) return end
+    end
+  end)
+end
+
 -- The text of a cell of the own columns.
 local function cellText(cell)
   local t = rawget(cell, "Text")
@@ -484,12 +501,23 @@ function SellInfo.RowUnit(d)
 end
 
 local probed = false
+local function fillAuctionCell(cell, d, i)
+  if not (SellInfo.columns and (i == 2 or i == 3)) then return end
+  local key = type(d) == "table" and d.itemKey
+  local id = type(key) == "table" and key.itemID or nil
+  local costText, profitText = "", ""
+  if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
+  cellText(cell):SetText((i == 2 and costText or profitText) or "")
+end
+
 local function updateAuctionRow(row)
   local d = rowData(row)
   local key = d and d.itemKey
   local id = type(key) == "table" and key.itemID or nil
   local cells = rawget(row, "cells")
   if SellInfo.columns and type(cells) == "table" and cells[2] and cells[3] then
+    hookCell(cells[2], fillAuctionCell)
+    hookCell(cells[3], fillAuctionCell)
     local costText, profitText = "", ""
     if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
     cellText(cells[2]):SetText(costText or "")
@@ -694,6 +722,16 @@ function SellInfo.BrowseValues(id, price)
   return pctText, ns.Item.DemandText(item) or "|cff999999–|r"
 end
 
+local function fillBrowseCell(list, cell, d, i)
+  local cols = list.m4Cols
+  if not (cols and (i == cols.pct or i == cols.demand)) then return end
+  local key = type(d) == "table" and d.itemKey
+  local id = type(key) == "table" and key.itemID or nil
+  local pctText, demandText = "", ""
+  if id then pctText, demandText = SellInfo.BrowseValues(id, d.minPrice) end
+  cellText(cell):SetText(i == cols.pct and pctText or demandText)
+end
+
 local function updateBrowseRow(list, row)
   local cols = list.m4Cols
   if not cols then return end
@@ -702,6 +740,10 @@ local function updateBrowseRow(list, row)
   if type(cells) ~= "table" then return end
   local pc, dc = cells[cols.pct], cells[cols.demand]
   if not (pc and dc) then return end
+  local fill = list.m4Fill or function(cell, data, i) fillBrowseCell(list, cell, data, i) end
+  list.m4Fill = fill
+  hookCell(pc, fill)
+  hookCell(dc, fill)
   local key = d and d.itemKey
   local id = type(key) == "table" and key.itemID or nil
   local pctText, demandText = "", ""
