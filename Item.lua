@@ -345,5 +345,20 @@ function Item.DemandText(e)
   return "kaum"
 end
 
+-- The demand level as a symbol, for the auction house list: red arrow down (niedrig, kaum),
+-- orange dash (mittel), green arrow up (hoch), flame (sehr hoch); nil without data.
+-- The arrows are the vanilla tutorial arrows (they point down; the green one flipped for "up").
+local DEMAND_ICONS = {
+  ["sehr hoch"] = "|TInterface\\Icons\\Spell_Fire_Fire:14:14:0:0:64:64:5:59:5:59|t",
+  ["hoch"] = "|TInterface\\Buttons\\UI-MicroStream-Green:14:14:0:0:32:32:0:32:32:0|t",
+  ["mittel"] = "|cffff9933–|r",
+  ["niedrig"] = "|TInterface\\Buttons\\UI-MicroStream-Red:14:14|t",
+}
+DEMAND_ICONS["kaum"] = DEMAND_ICONS["niedrig"]
+function Item.DemandIcon(e)
+  local text = Item.DemandText(e)
+  return text and (DEMAND_ICONS[text] or text) or nil
+end
+
 Item.CUT = CUT
 ns.Item = setmetatable(Item, { __call = function(_, itemID) return Item.Get(itemID) end })

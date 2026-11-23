@@ -687,7 +687,7 @@ function SellInfo.BrowseValues(id, price)
     else text = "|cff999999" .. text .. "|r" end
     pctText = text
   end
-  return pctText, ns.Item.DemandText(item) or "|cff999999–|r"
+  return pctText, ns.Item.DemandIcon(item) or "|cff999999–|r"
 end
 
 local function updateBrowseRow(list, row)
