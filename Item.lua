@@ -289,6 +289,9 @@ function Item.SellNet(e)
   -- see Item.Reference): one seller listing far above it does not make it sellable there.
   local base = e.now and (e.now - 1) or e.ref
   if base and e.ref then base = math.min(base, e.ref) end
+  -- falling price (trend below 0): what it brings when sold later is less - the trend taken
+  -- off once more (at most 30 %); a rising price adds nothing (it may turn)
+  if base and e.trend and e.trend < 0 then base = base * (1 + math.max(e.trend, -0.3)) end
   local ah = base and base > 0 and math.floor(base * (1 - CUT)) or 0
   local vendor = e.vendorSell or 0
   if ah > 0 and ah >= vendor then return ah, true end
