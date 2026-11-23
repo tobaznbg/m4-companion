@@ -580,6 +580,9 @@ local function buildLedger(page)
       local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
       local mode = entry.listMode
       local label
+      if r.kind == "loot" and not entry.isLoot then
+        label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (Beute)|r"
+      end
       if mode == "buy" then
         units, value = x.from and (MUTED .. "übern.|r") or tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
         if x.from then label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (aus " .. shortGroup(x.from) .. ")|r" end

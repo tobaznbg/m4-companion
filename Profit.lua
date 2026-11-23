@@ -483,6 +483,13 @@ local function itemRows(since, replayed)
       local group = area
       -- gathered by a profession nobody in the household has (looted ore, herbs): loot
       if area ~= FARMED and area ~= TRADE and area ~= OWN and Profit.IsFarmed(area) and not own[area] then group = FARMED end
+      -- loot that is material of a household profession (wolf meat: Kochkunst) is that
+      -- profession's loot
+      local lootOf = group == FARMED and materialOf(id, act, own)
+      if lootOf then
+        table.insert(rows, row(id, lootOf, f, NONE, "loot"))
+        group = nil
+      end
       local p = group == TRADE and bought[id] or NONE
       local material = group == TRADE and ownMarks()[id] ~= true and materialOf(id, act, own)
       if material then
