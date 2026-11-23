@@ -597,8 +597,7 @@ local function buildLedger(page)
         label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (Beute)|r"
       end
       if mode == "buy" then
-        units, value = x.from and (MUTED .. "übern.|r") or tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
-        if x.from then label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (aus " .. shortGroup(x.from) .. ")|r" end
+        units, value = tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
       elseif mode == "out" then
         units, value = tostring(x.n or 0), signed(x.v)
       elseif mode == "sell" then
@@ -711,7 +710,10 @@ local function buildLedger(page)
         for _, r in ipairs(allMaterial) do
           for prof, v in pairs(r.usedBy or {}) do
             if prof ~= r.prof and v > 0 then
-              if prof == g.name then tin = tin + v; inRows[#inRows + 1] = { r = r, v = v, from = r.prof } end
+              if prof == g.name then
+              tin = tin + v
+              inRows[#inRows + 1] = { r = r, v = v, from = r.prof, n = r.usedByN and r.usedByN[prof] or nil }
+            end
               if r.prof == g.name then
               tout = tout + v
               outRows[#outRows + 1] = { r = r, v = v, to = prof, n = r.usedByN and r.usedByN[prof] or nil }
@@ -734,7 +736,7 @@ local function buildLedger(page)
             if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
             if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
           end
-          for _, x in ipairs(inRows) do buys[#buys + 1] = { r = x.r, v = x.v, from = x.from } end
+          for _, x in ipairs(inRows) do buys[#buys + 1] = { r = x.r, v = x.v, n = x.n } end
           table.sort(buys, function(a, b) return (a.v or 0) > (b.v or 0) end)
           table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
           table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
