@@ -848,7 +848,9 @@ local function productEntries(pid)
       coins = e.onAH and (ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)) or 0,
       coinsGrey = e.onAH and select(2, ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)) or false, locked = not e.learned,
       -- not learned: the name greyed, like a recipe out of reach
-      color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e }
+      color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e,
+      -- the profit per craft right in the row (the name is cut before it)
+      value = (e.profit and e.onAH) and ((e.profit >= 0 and "|cff5fd38d+" or "|cffff6b6b-") .. money(math.abs(e.profit)) .. "|r") or nil }
   end
   -- another player's profession window: what they know is not known here, so nothing is
   -- shown as locked
