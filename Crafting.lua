@@ -1338,8 +1338,13 @@ local function professionList()
   return craft, gather
 end
 
--- A profession's lines: who has it (under the name), and right-aligned how many recipes pay and
--- the best one's profit (crafting professions with collector figures only).
+-- A profession's line under the name (who has it) and its gold coins right in the row: those of
+-- its best recipe right now (ns.CoinCount of the profit, deep orange with high demand), like
+-- the recipe rows. The figures behind them are in the tooltip.
+local function professionStats(pid)
+  return ns.ProfessionStats and ns.ProfessionStats.professions and ns.ProfessionStats.professions[pid]
+end
+
 local function overviewLines(p)
   local knower, scan = knowerOf(p.pid)
   local who
@@ -1348,13 +1353,8 @@ local function overviewLines(p)
   else
     who = "|cff9d9d9dnicht erlernt|r"
   end
-  local s = ns.ProfessionStats and ns.ProfessionStats.professions and ns.ProfessionStats.professions[p.pid]
-  local pays, best = "", ""
-  if s then
-    pays = string.format("%d lohnen", s[1] or 0)
-    if (s[3] or 0) > 0 then best = "bestes |cff5fd38d+" .. money(s[3]) .. "|r" end
-  end
-  return who, pays, best
+  local s = professionStats(p.pid)
+  return who, s and ns.CoinCount(s[3]) or 0, s and ns.CoinHot(s[4]) or false
 end
 
 local function overviewSlot(parent, p)
@@ -1372,16 +1372,23 @@ local function overviewSlot(parent, p)
   slot.Name:SetPoint("BOTTOMLEFT", slot, "RIGHT", 8, 1)
   slot.Sub:ClearAllPoints()
   slot.Sub:SetPoint("TOPLEFT", slot, "RIGHT", 8, -3)
-  b.pays = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  b.pays:SetPoint("BOTTOMRIGHT", b, "RIGHT", -10, 1)
-  b.pays:SetJustifyH("RIGHT")
-  b.best = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.best:SetPoint("TOPRIGHT", b, "RIGHT", -10, -3)
-  b.best:SetJustifyH("RIGHT")
+  local pin = CreateFrame("Frame", nil, b)
+  pin:SetSize(1, 1)
+  pin:SetPoint("RIGHT", b, "RIGHT", -10, 0)
+  b.coins = NW.Coins(b, nil)
+  b.pin = pin
   b:SetScript("OnClick", function() ns.Safe(Products.Show, p.pid) end)
   b:SetScript("OnEnter", function(btn)
     GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
     GameTooltip:SetText(p.name)
+    local st = professionStats(p.pid)
+    local best = st and st[2] and ns.RecipeData[p.pid] and ns.RecipeData[p.pid].recipes[st[2]]
+    if st then
+      GameTooltip:AddLine(string.format("%d Rezepte lohnen sich gerade", st[1] or 0), 1, 1, 1)
+      if best and (st[3] or 0) > 0 then
+        GameTooltip:AddDoubleLine("Bestes: " .. best[1], "+" .. money(st[3]), 1, 1, 1, 0.37, 0.83, 0.55)
+      end
+    end
     GameTooltip:AddLine("Klick: alle Rezepte, was sie kosten und was sie bringen", 0.8, 0.8, 0.8)
     GameTooltip:Show()
   end)
@@ -1413,10 +1420,9 @@ end
 
 refreshOverview = function()
   for _, b in ipairs(overviewRows) do
-    local who, pays, best = overviewLines(b.p)
+    local who, coins, hot = overviewLines(b.p)
     b.slot.Sub:SetText(who)
-    b.pays:SetText(pays)
-    b.best:SetText(best)
+    b.coins.Set(coins, b.pin, hot)
   end
   local f = productsWindow and productsWindow.frame
   if f and f.SetTitle then pcall(f.SetTitle, f, "Berufsübersicht") end
