@@ -222,6 +222,7 @@ local function replay(since)
   local traded = {}     -- itemID -> true: posted, sold, vendored, expired or cancelled once
   local tools = {}      -- itemID -> true: the tool of a craft
   local toolProf = {}   -- itemID -> profession whose craft used it as its tool
+  local lastT = {}      -- itemID -> time of its last ledger event
   local usedBy = {}     -- itemID -> { [profession] = units of the bought pool used in its crafts }
   local craftProfs = {} -- profession -> true: crafted with in this household
   local usedFree = {}   -- itemID -> { [profession] = units used that came from no pool (loot) }
@@ -242,6 +243,7 @@ local function replay(since)
   for _, e in ipairs(events) do
     local inPeriod = (not since or (e.t or 0) >= since) and charOK(e)
     local id, u = idOf(e), e.u or 0
+    if id then lastT[id] = e.t or 0 end
     if id and e.k == "buy" then
       everBought[id] = true
       local p = pool(bought, id)
@@ -342,7 +344,7 @@ local function replay(since)
       end
     end
   end
-  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, toolProf = toolProf, craftProfs = craftProfs }
+  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, toolProf = toolProf, lastT = lastT, craftProfs = craftProfs }
 end
 
 -- The profession a bought item is material of, from the item itself: a reagent of that
@@ -450,12 +452,15 @@ local function round(x) return math.floor(x + 0.5) end
 -- p: the pool (units left); left = units the household still holds of it (nil: not known).
 -- Units of the pool no longer held (vendored before that was logged, used, destroyed) are gone:
 -- their cost is booked as a write-off (in cost and profit), the stock is what is still there.
-local function row(id, group, f, p, kind, left)
+-- The write-off belongs to the time of the item's last ledger event (it left after that):
+-- booked = false keeps it out of a period that starts later (the stock is capped anyway).
+local function row(id, group, f, p, kind, left, booked)
   local gone, goneValue = 0, 0
   if left and p.q > left then
     gone = p.q - left
     goneValue = p.v * gone / p.q
     p = { q = left, v = p.v - goneValue }
+    if booked == false then gone, goneValue = 0, 0 end
   end
   local cost = ((group == OWN or kind == "expense") and round(f.materials) or round(f.soldCost)) + round(goneValue)
   return {
@@ -506,6 +511,7 @@ local function itemRows(since, replayed)
   local rows = {}
   local held = Profit.HeldCounts and Profit.HeldCounts(true) -- defined further down
   local own = ownProfessions(act)
+  local function booked(id) return not since or (act.lastT[id] or 0) >= since end
   -- what the household still holds, shared by the crafted pool first, then the bought one
   local leftCrafted, leftBought = {}, {}
   if held then
@@ -536,7 +542,7 @@ local function itemRows(since, replayed)
       if material then
         -- a reagent: material of its profession (bought, used in crafts, rest sold or kept)
         if f.bought > 0 or f.used > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0 or p.q > 0 then
-          table.insert(rows, row(id, material, f, p, "material", held and leftBought[id] or nil))
+          table.insert(rows, row(id, material, f, p, "material", held and leftBought[id] or nil, booked(id)))
         end
         group = nil
       elseif group == TRADE and isOwnUse(id, act, held, bought[id]) then
@@ -557,7 +563,7 @@ local function itemRows(since, replayed)
       if show then
         -- gathered by a household profession (skinned leather): that profession's loot
         local kind = group ~= TRADE and group ~= OWN and Profit.IsFarmed(group) and "loot" or nil
-        table.insert(rows, row(id, group, f, p, kind, held and group == TRADE and leftBought[id] or nil))
+        table.insert(rows, row(id, group, f, p, kind, held and group == TRADE and leftBought[id] or nil, booked(id)))
       end
     end
   end
@@ -565,7 +571,7 @@ local function itemRows(since, replayed)
     local f = items[id] or newFigures()
     local p = crafted[id] or NONE
     if f.crafted > 0 or f.sold > 0 or f.fees > 0 or f.expired > 0 or f.cancelled > 0 or p.q > 0 then
-      table.insert(rows, row(id, prof, f, p, "product", held and leftCrafted[id] or nil))
+      table.insert(rows, row(id, prof, f, p, "product", held and leftCrafted[id] or nil, booked(id)))
     end
   end
   return rows
