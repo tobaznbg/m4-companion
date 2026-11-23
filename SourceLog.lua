@@ -5,7 +5,10 @@
 --   trainer   a trainer window: every service shown (name, skill needed, cost)
 --   loot      a recipe item looted: from which creature (or object)
 -- ns.db.sourceLog = { v = 1,
---   merchant = { [npcID] = { name, zone, map, x, y, t, items = { [itemID] = { p = copper, lim = 1|nil, t } } } },
+--   merchant = { [npcID] = { name, zone, map, x, y, t, items = { [itemID] = { p = copper, lim = 1|nil, n = units
+--                there now (limited stock), t } }, visits = { { t, s = { [itemID] = units } }… } } },
+--              visits: the stock of its limited recipes per visit (0 = a limited recipe seen before is
+--              gone: sold out), the last 50 - when it restocks
 --   trainer  = { [npcID] = { name, zone, map, x, y, t, skill = profession, s = { [service name] =
 --                { req = skill needed, c = copper, t } } } },
 --   loot     = { [itemID] = { [source] = { n = times, t = last } } } }   source: npc id, or "o<id>" for an object
@@ -69,14 +72,28 @@ local function recordMerchant()
     end
     if id and isRecipe(id) then
       local ok, _, _, price, _, numAvailable = pcall(GetMerchantItemInfo, i)
-      items[id] = { p = ok and price or nil, lim = ok and numAvailable and numAvailable >= 0 and 1 or nil, t = time() }
+      local limited = ok and numAvailable and numAvailable >= 0
+      items[id] = { p = ok and price or nil, lim = limited and 1 or nil, n = limited and numAvailable or nil, t = time() }
     end
   end
   if not next(items) then return end -- only merchants with recipes are kept
   local e = npcEntry(root().merchant)
   if not e then return end
   e.items = e.items or {}
-  for id, v in pairs(items) do e.items[id] = v end
+  -- stock of the limited recipes this visit; one seen limited before and missing now: sold out
+  local stock = {}
+  for id, v in pairs(e.items) do if v.lim and not items[id] then stock[id] = 0 end end
+  for id, v in pairs(items) do
+    if v.lim then stock[id] = v.n or 0 end
+    e.items[id] = v
+  end
+  if next(stock) then
+    e.visits = e.visits or {}
+    local last = e.visits[#e.visits]
+    -- one entry per visit (MERCHANT_UPDATE fires several times while the window is open)
+    if last and time() - last.t < 120 then last.s = stock else table.insert(e.visits, { t = time(), s = stock }) end
+    while #e.visits > 50 do table.remove(e.visits, 1) end
+  end
 end
 
 local function recordTrainer()
@@ -116,6 +133,7 @@ end
 
 if ns.On then
   ns.On("MERCHANT_SHOW", function() ns.Safe(recordMerchant) end)
+  ns.On("MERCHANT_UPDATE", function() ns.Safe(recordMerchant) end) -- items arriving late
   ns.On("TRAINER_SHOW", function() ns.Safe(recordTrainer) end)
   ns.On("TRAINER_UPDATE", function() ns.Safe(recordTrainer) end)
   ns.On("LOOT_OPENED", function() ns.Safe(recordLoot) end)
