@@ -3,7 +3,7 @@
 ## Notes: made four – Auktionshaus-Preise, Trends, Crafting-Gewinne und Handelsbuch für WoW Forever.
 ## IconTexture: Interface\AddOns\m4-companion\media\icon
 ## Author: Tobias Vonau
-## Version: 0.18.1
+## Version: 0.18.2
 ## SavedVariables: M4CompanionDB
 
 Core.lua
