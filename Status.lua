@@ -1,6 +1,7 @@
 -- Status: how current the data is, the same line everywhere (windows, minimap tooltip).
---   cloud   time of the collector's newest snapshot in the data file (ns.AHData[113].updated)
---   scan    time of the own full scan in the game (ns.db.ah.currentT)
+--   cloud   time of the collector's newest snapshot in the data file of the current
+--           auction house (AuctionHouse.CloudData().updated)
+--   scan    time of the own full scan of the current auction house (AuctionHouse.Peek().currentT)
 local ADDON, ns = ...
 
 local Status = {}
@@ -28,8 +29,9 @@ end
 
 -- Times of the cloud data and the own scan (epoch seconds or nil).
 function Status.Times()
-  local house = ns.AHData and ns.AHData[113]
-  return house and epoch(house.updated), ns.db and ns.db.ah and ns.db.ah.currentT
+  local house = ns.AuctionHouse.CloudData()
+  local scan = ns.AuctionHouse.Peek()
+  return house and epoch(house.updated), scan and scan.currentT
 end
 
 -- "Daten 14:18 (vor 23 Min.) · Scan 14:30"; orange when the newest is older than STALE.
@@ -38,7 +40,7 @@ function Status.Text()
   if not cloud and not scan then return "|cffffb547Keine Marktdaten|r" end
   local parts = {}
   if cloud then table.insert(parts, "Daten " .. date("%H:%M", cloud) .. " (" .. ago(cloud) .. ")") end
-  if scan then table.insert(parts, "Scan " .. date("%H:%M", scan)) end
+  if scan then table.insert(parts, "Scan " .. date("%H:%M", scan) .. " (" .. ns.AuctionHouse.Name() .. ")") end
   local newest = math.max(cloud or 0, scan or 0)
   local text = table.concat(parts, "  ·  ")
   if time() - newest > Status.STALE then text = "|cffffb547" .. text .. "|r" end

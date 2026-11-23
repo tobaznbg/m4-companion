@@ -218,6 +218,9 @@ SlashCmdList.M4COMPANION = function(msg)
     UI.SetShown(true)
   elseif msg == "scan" then
     ns.Safe(ns.AuctionScan.Start)
+  elseif cmd and cmd:lower() == "ah" then
+    -- /m4 ah: house and auctioneer; /m4 ah A|N|H fixes the auctioneer in front of you
+    ns.Safe(ns.AuctionHouse.Command, rest)
   elseif cmd and (cmd:lower() == "suche" or cmd:lower() == "markt") then
     -- /m4 suche [Text]: the ledger's market search
     if ns.TradeBook then ns.Safe(ns.TradeBook.ShowSearch, rest) end
@@ -241,7 +244,7 @@ SlashCmdList.M4COMPANION = function(msg)
   elseif msg == "farm" then
     UI.SetShown(not (frame and frame:IsShown()))
   elseif msg == "hilfe" or msg == "help" then
-    print("|cffffd100M4:|r /m4 – Fenster, /m4 handel – Handelsbuch, /m4 suche [Name] – Marktsuche, /m4 scan – AH-Vollscan, /m4 farm – Farm-Tracker, /m4 item <Link/Name/ID> – Item-Details (oder Alt+Klick aufs Item)")
+    print("|cffffd100M4:|r /m4 – Fenster, /m4 handel – Handelsbuch, /m4 suche [Name] – Marktsuche, /m4 scan – AH-Vollscan, /m4 ah – Auktionshaus (Allianz/Neutral/Horde) und Auktionator,/m4 farm – Farm-Tracker, /m4 item <Link/Name/ID> – Item-Details (oder Alt+Klick aufs Item)")
   else
     if ns.MainUI then ns.MainUI.Toggle() else ns.PlannerUI.Toggle() end
   end

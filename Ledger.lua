@@ -13,7 +13,9 @@
 -- Mails stay in the inbox until taken, so every scan sees them again. A mail counts
 -- once: same kind, item, amount and count and a receive time within MAIL_SLACK of
 -- an entry already logged is the same mail.
--- db.ledger[charKey] = { events = { { t, k, i, n, u, c, cut, p, d }... } }
+-- db.ledger[charKey] = { events = { { t, k, i, n, u, c, cut, p, d, ah, npc }... } }
+--   ah, npc: auction house ("A" Allianz, "N" Neutral, "H" Horde) and auctioneer of a buy / post
+--   (AuctionHouse.lua); mails carry the house from their sender (no auctioneer), nil if unknown
 --   t time, k kind, i itemID (nil if only the name is known), n item name,
 --   u units, c copper (buy: paid, sale: price before cut), cut, p unit price (post), d duration,
 --   dep deposit paid for the post (copper, all units; nil when the client could not tell)
@@ -102,7 +104,7 @@ ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
   local c = commodity
   commodity = nil
   if not c or not c.total then return end
-  add({ k = "buy", i = c.itemID, u = c.units, c = c.total })
+  add(ns.AuctionHouse.Tag({ k = "buy", i = c.itemID, u = c.units, c = c.total }))
 end)
 
 ns.On("COMMODITY_PURCHASE_FAILED", function() commodity = nil end)
@@ -111,7 +113,7 @@ ns.On("AUCTION_HOUSE_PURCHASE_COMPLETED", function(_, auctionID)
   local b = bids[auctionID]
   bids[auctionID] = nil
   if not b then return end
-  add({ k = "buy", i = b.itemID, u = 1, c = b.amount })
+  add(ns.AuctionHouse.Tag({ k = "buy", i = b.itemID, u = 1, c = b.amount }))
 end)
 
 -- Posts -----------------------------------------------------------------------------
@@ -144,7 +146,7 @@ end)
 
 ns.On("AUCTION_HOUSE_AUCTION_CREATED", function()
   local e = table.remove(posting, 1)
-  if e then add(e) end
+  if e then add(ns.AuctionHouse.Tag(e)) end
 end)
 
 ns.On("AUCTION_HOUSE_CLOSED", function() posting, bids, commodity = {}, {}, nil end)
@@ -193,7 +195,7 @@ local function scanInbox()
   if not GetInboxNumItems then return end
   local used = {}
   for i = 1, GetInboxNumItems() do
-    local _, _, _, subject, _, _, daysLeft = GetInboxHeaderInfo(i)
+    local _, _, sender, subject, _, _, daysLeft = GetInboxHeaderInfo(i)
     local received = time() - math.floor(((MAIL_DAYS - (daysLeft or MAIL_DAYS)) * 86400))
     local invoiceType, itemName, _, bid, _, _, cut, _, _, _, count = nil, nil
     if GetInboxInvoiceInfo then
@@ -221,6 +223,8 @@ local function scanInbox()
     end
     if e then
       e.i = e.i or idForName(e.n)
+      -- the house from the mail's sender (a mail names no auctioneer)
+      e.ah = ns.AuctionHouse.FromSender(sender)
       e.m = table.concat({ e.k, e.n, e.c or 0, e.u }, "|")
       local seen = known(e.m, received, used)
       if not seen and e.k == "buy" and tagLoggedBuy(e, received, used) then

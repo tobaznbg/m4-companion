@@ -40,7 +40,6 @@
 local ADDON, ns = ...
 
 local CUT = 0.05
-local HOUSE = 113
 
 -- Classic merchant prices of common reagents, until a merchant visit records the real one.
 local VENDOR_ESTIMATE = {
@@ -52,8 +51,9 @@ local VENDOR_ESTIMATE = {
 local Item = {}
 local observed = {}   -- itemID -> { now, t } from single item searches (this session)
 
+-- The cloud data of the current auction house (ns.AuctionHouse.CloudData), nil without.
 local function collector(itemID)
-  local house = ns.AHData and ns.AHData[HOUSE]
+  local house = ns.AuctionHouse.CloudData()
   return house and house.items[itemID], house
 end
 
@@ -82,8 +82,11 @@ end
 local function guildSale(itemID)
   local live = rawget(_G, "M4CompanionData")
   local gs = type(live) == "table" and live.GuildSales
-  if type(gs) ~= "table" then return nil end
-  local items = type(gs.houses) == "table" and gs.houses[HOUSE] or gs.items
+  local id = ns.AuctionHouse.CloudID()
+  if type(gs) ~= "table" or not id then return nil end
+  local items
+  if type(gs.houses) == "table" then items = gs.houses[id]
+  elseif id == ns.AuctionHouse.PRIMARY_CLOUD then items = gs.items end
   local row = type(items) == "table" and items[itemID]
   if type(row) ~= "table" or type(row[1]) ~= "number" or row[1] <= 0 then return nil end
   return { median = row[1], sales = row[2] or 0, units = row[3] or 0, days = gs.days or 7 }
@@ -106,7 +109,7 @@ function Item.Get(itemID)
     bestT = epoch(house.updated) or 0
     e.now, e.offers, e.quantity = row[1], row[7], row[8]
   end
-  local ah = ns.db and ns.db.ah
+  local ah = ns.AuctionHouse.Peek() -- the own scan of the current auction house
   if ah and ah.currentT and ah.currentT > bestT then
     local live = ah.current and ah.current[itemID]
     -- own scan row: { min, marketValue, quantity, offers, sellers }
@@ -115,7 +118,8 @@ function Item.Get(itemID)
     bestT = ah.currentT
   end
   local o = observed[itemID]
-  if o and o.t > bestT then
+  -- single searches belong to the automatic house: not while another house is viewed
+  if o and o.t > bestT and ns.AuctionHouse.Current() == ns.AuctionHouse.Auto() then
     e.now = o.now
     bestT = o.t
   end
@@ -140,7 +144,8 @@ end
 -- All offers of the item in the own full scan, cheapest first: { { unit, count }... }, and
 -- the scan time; nil without a scan. (The only place that reads the scan's listings.)
 function Item.Listings(itemID)
-  local last = ns.db and ns.db.ah and ns.db.ah.last
+  local h = ns.AuctionHouse.Peek()
+  local last = h and h.last
   local keys = last and last.items and last.items[itemID]
   if not keys then return nil, last and last.t end
   local list = {}
@@ -162,8 +167,13 @@ end
 -- The live copy from the data addon (m4-companion_Data, kept current by the companion app,
 -- global M4CompanionData) wins over the one shipped with this addon.
 -- Looked up per call: the data addon loads after this one.
-local function historyTable()
+-- Per house id: ns.HistoryAH[id] of the data addon; the collector's main house also has it as
+-- ns.History (older data addons only that one, and the copy shipped with this addon).
+local function historyTable(id)
   local live = rawget(_G, "M4CompanionData")
+  local per = type(live) == "table" and type(live.HistoryAH) == "table" and live.HistoryAH[id]
+  if type(per) == "table" then return per end
+  if id ~= ns.AuctionHouse.PRIMARY_CLOUD then return nil end
   if type(live) == "table" and type(live.History) == "table" then return live.History end
   return ns.History
 end
@@ -219,14 +229,17 @@ end
 -- The app's live copy first; an item it does not know (older or smaller file) from the copy
 -- shipped with the addon.
 function Item.History(itemID, hourly)
-  local live = historyTable()
+  local id = ns.AuctionHouse.CloudID() -- the history of the current house's cloud data
+  if not id then return nil end
+  local live = historyTable(id)
   return historyFrom(live, itemID, hourly)
-    or (live ~= ns.History and historyFrom(ns.History, itemID, hourly)) or nil
+    or (id == ns.AuctionHouse.PRIMARY_CLOUD and live ~= ns.History and historyFrom(ns.History, itemID, hourly)) or nil
 end
 
 -- Items in the own full scan (itemID -> true).
 function Item.ScannedItems()
-  local last = ns.db and ns.db.ah and ns.db.ah.last
+  local h = ns.AuctionHouse.Peek()
+  local last = h and h.last
   return last and last.items or {}
 end
 
@@ -234,6 +247,9 @@ end
 function Item.Observe(itemID, cheapest, t)
   observed[itemID] = { now = cheapest, t = t or (time and time()) or 0 }
 end
+
+-- What single searches saw belongs to the house they were made at: forgotten on a switch.
+ns.AuctionHouse.OnChange(function() observed = {} end)
 
 -- R and its source from the medians of an item table (see the head of this file).
 -- R: the median of the 7 days (one odd day moves it little) once it rests on at least 3 days,

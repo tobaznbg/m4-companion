@@ -16,14 +16,20 @@ local function getInfo(itemID)
 end
 
 local function collect()
-  local ah = ns.db.ah and ns.db.ah.current
-  if not ah or running then return end
+  local houses = ns.db.ah and ns.db.ah.houses
+  if not houses or running then return end
   running = true
   ns.db.vendorSell = ns.db.vendorSell or {}
   local known = ns.db.vendorSell
-  local todo = {}
-  for itemID in pairs(ah) do
-    if known[itemID] == nil then table.insert(todo, itemID) end
+  local todo, queued = {}, {}
+  -- the items of every house's scan (merchant prices are the same everywhere)
+  for _, h in pairs(houses) do
+    for itemID in pairs(h.current or {}) do
+      if known[itemID] == nil and not queued[itemID] then
+        queued[itemID] = true
+        table.insert(todo, itemID)
+      end
+    end
   end
   local pass, index, missing = 1, 1, {}
   local function step()

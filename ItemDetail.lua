@@ -707,9 +707,11 @@ end
 -- "Einstand eintragen": a cost per unit typed by hand (ns.Profit.SetManualCost), for an item
 -- bought before the addon logged purchases. Placed at the y cursor of the cost section.
 
-render = function()
-  if not frame or not frame:IsShown() or not itemID then return end
+local function renderBody()
   local Style = ns.Style
+  -- Another house than the automatic one is shown (the choice in the head): only its scan.
+  -- The search on opening, the last searches and the sniper's hits are the automatic house's.
+  local elsewhere = ns.AuctionHouse.Current() ~= ns.AuctionHouse.Auto()
   local getIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
   frame.icon:SetTexture(getIcon and getIcon(itemID) or nil)
   local name = liveName or ns.ItemName(itemID) or ("#" .. itemID)
@@ -721,7 +723,7 @@ render = function()
   end
   frame.name:SetText(name)
   y, used, usedSections, usedMap = 0, 0, 0, 0
-  local h = currentHit(itemID)
+  local h = not elsewhere and currentHit(itemID) or nil
   local item = ns.Item(itemID)
 
   -- 1. Why it is a hit (only while the item is one)
@@ -761,8 +763,8 @@ render = function()
   y = y + CHART_H + 20
 
   -- 3. Market figures (ns.Item)
-  section("Markt")
-  local fresh = live and live.itemID == itemID and live
+  section("Markt  " .. Style.MUTED .. "(" .. ns.AuctionHouse.Name() .. ")|r")
+  local fresh = not elsewhere and live and live.itemID == itemID and live
   local now = item.now
   if fresh and fresh.state == "done" then
     local cheapest = fresh.offers[1]
@@ -798,7 +800,7 @@ render = function()
   elseif item.dataT then
     dataText = (fresh and fresh.state == "failed" and (Style.MUTED .. "Suche ohne Antwort · |r") or "") .. ago(item.dataT)
   end
-  line("Daten", dataText or "–")
+  line("Daten", dataText or (Style.MUTED .. "keine aus dem AH " .. ns.AuctionHouse.Name() .. "|r"))
 
   -- 3b. What one unit cost the player (ns.Profit.UnitCost) and the room left to undercut.
   local cost = nil
@@ -836,7 +838,7 @@ render = function()
   if fresh and fresh.state == "done" then
     levels, t = fresh.offers, fresh.t
     from = time() - t < 60 and "gerade gesucht" or ("letzte Suche " .. ago(t))
-  else
+  elseif not elsewhere then
     levels, t = lastSearch(itemID)
     if levels then from = "letzte Suche " .. ago(t) end
   end
@@ -963,6 +965,14 @@ render = function()
   if scroll.UpdateBar then scroll.UpdateBar() end
 end
 
+-- The window on the house of the choice in its head (AuctionHouse.Chooser).
+render = function()
+  if not frame or not frame:IsShown() or not itemID then return end
+  if frame.house then frame.house.Update() end
+  local house = frame.house and frame.house.Selected() or nil
+  ns.AuctionHouse.WithView(house, renderBody)
+end
+
 -- Window ----------------------------------------------------------------------------
 
 local FRAME_NAME = "M4CompanionItemDetail"
@@ -1080,6 +1090,8 @@ local function create()
     if not docked then ns.Safe(savePosition) end
   end)
   frame.head = head
+  -- right in the head: which auction house the figures are of (green = automatic, red = chosen)
+  frame.house = ns.AuctionHouse.Chooser(frame, 104, function() render() end)
   scroll, body = Style.Scroll(frame)
   frame:Hide()
 end
@@ -1096,6 +1108,8 @@ local function applySkin()
   if frame.blizzdeco then frame.blizzdeco:SetFrameLevel(base) end
   frame.head:SetFrameLevel(base + 5)
   scroll:SetFrameLevel(base + 5)
+  frame.house:SetFrameLevel(base + 6)
+  frame.house:ClearAllPoints()
   if scroll.thumb then
     if blizz then
       scroll.thumb:SetColorTexture(0.85, 0.68, 0.2, 0.8)
@@ -1108,16 +1122,18 @@ local function applySkin()
   frame.head:ClearAllPoints()
   scroll:ClearAllPoints()
   if blizz then
+    frame.house:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -33)
     frame.head:SetPoint("TOPLEFT", 12, -32)
-    frame.head:SetPoint("RIGHT", frame, "RIGHT", -12, 0)
+    frame.head:SetPoint("RIGHT", frame.house, "LEFT", -8, 0)
     frame.head:SetHeight(28)
     frame.icon:SetSize(24, 24)
     frame.name:SetFontObject(GameFontHighlightLarge)
     scroll:SetPoint("TOPLEFT", 14, -72)
     scroll:SetPoint("BOTTOMRIGHT", -14, 14)
   else
+    frame.house:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -34, -4)
     frame.head:SetPoint("TOPLEFT", 6, -4)
-    frame.head:SetPoint("RIGHT", frame, "RIGHT", -32, 0)
+    frame.head:SetPoint("RIGHT", frame.house, "LEFT", -8, 0)
     frame.head:SetHeight(24)
     frame.icon:SetSize(20, 20)
     frame.name:SetFontObject(ns.Style.Font(14))
@@ -1135,6 +1151,7 @@ end
 -- Opens the detail of the item (docked at the auction house or as a window of its own).
 --   opts.anchor  dock right of this frame instead of the current AH panel
 --   opts.origin  "sniper" when opened from the sniper list
+--   opts.house   the auction house to show ("A"/"N"/"H"); nil: the automatic one
 -- Searches the item now when the auction house is open (ns.AHSearch); the answer re-renders.
 -- Full auction house key of an item link with a random suffix ("… des Bären"): the plain item
 -- id would find only the variant without suffix. nil for links without one.
@@ -1181,6 +1198,8 @@ function Detail.Show(item, opts)
   end
   if live and live.itemID == id then live = nil end -- a new variant searches again
   skin = opts.skin or "blizzard" -- the native look everywhere (the own look stays selectable)
+  -- the house: the caller's (the ledger's market search passes its choice), else automatic
+  frame.house.Select(opts.house)
   applySkin()
   place(opts.anchor)
   frame:Show()
@@ -1357,3 +1376,6 @@ if ns.On then
     if id == itemID then render() end
   end)
 end
+
+-- Another auction house opened: the automatic choice moved, the figures follow.
+ns.AuctionHouse.OnChange(function() if render then render() end end)
