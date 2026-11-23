@@ -105,7 +105,10 @@ local function scrollTable(c, cols, top)
         fs:SetWordWrap(false)
         if col[3] == "LEFT" then
           fs:SetPoint("LEFT", row, "LEFT", k == 1 and 26 or (col[2] - 16), 0)
-          fs:SetWidth(col[4] or 200)
+          -- ends before the next (right-aligned) column with room for its text; longer is cut "…"
+          local nextCol = cols[k + 1]
+          local room = nextCol and nextCol[3] ~= "LEFT" and (nextCol[2] - 16) - (k == 1 and 26 or (col[2] - 16)) - 38
+          fs:SetWidth(room and math.min(col[4] or 200, room) or (col[4] or 200))
           fs:SetJustifyH("LEFT")
         else
           fs:SetPoint("RIGHT", row, "LEFT", col[2] - 16, 0)
