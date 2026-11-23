@@ -428,7 +428,7 @@ local function buyFigures(g, m, trade, e)
   e = e or {}
   return { sub = trade and "Einkauf – Ware, im AH oder beim Händler gekauft" or "Einkauf – Material, Rezepte und Werkzeuge, im AH oder beim Händler gekauft", topTitle = "",
     labels = { "Einkauf", trade and "Gekauft" or "Material", trade and "Einstand eingetragen (vor der Aufzeichnung)" or "Rezepte und Werkzeuge",
-      "Davon verarbeitet", trade and "Wieder verkauft" or "Roh wieder verkauft", "Noch vorhanden" },
+      "Davon verarbeitet", trade and "Wieder verkauft" or "Roh wieder verkauft", "Bestand jetzt (alles)" },
     values = { RED .. "-" .. money((m.spent or 0) + (m.pre or 0) + (e.spent or 0)) .. "|r",
       string.format("%d Stück · %s", m.bought or 0, money(m.spent)),
       trade and ((m.pre or 0) > 0 and string.format("%d Stück · %s", m.preN or 0, money(m.pre)) or "–")
@@ -810,7 +810,7 @@ local function buildLedger(page)
           entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, color = WHITE, name = "Verkauf",
             title = shortGroup(g.name) .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
             figures = sellFigures(g, m, pr, trade), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
-          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = GREY, name = "Bestand",
+          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = GREY, name = since() and "Bestandsänderung" or "Bestand",
             title = shortGroup(g.name) .. " – Bestand", icon = icon, value = greyed(stockValueOf(g)),
             figures = stockFigures(g, m, pr, trade), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
         else
