@@ -1356,7 +1356,8 @@ local function showProduct(entry, c)
   if v.Shop then
     local can = not e.gather and e.itemID ~= nil and type(e.reagents) == "table" and #e.reagents > 0
     v.Shop:ClearAllPoints()
-    v.Shop:SetPoint("TOPLEFT", gewinn, "BOTTOMLEFT", 0, -12)
+    -- right-aligned with the values (under the profit's amount)
+    v.Shop:SetPoint("TOPRIGHT", v.rows[#v.rows].value, "BOTTOMRIGHT", 2, -12)
     v.Shop:SetShown(can)
     if can then bottomOf = v.Shop end
   end
