@@ -86,13 +86,23 @@ local function rows(filter, professionID, charKey)
     local learned = known and known.r.learned and true or false
     if out and (learned or filter ~= "learned") then
       local cost = ns.Item.MaterialCost(reagentList)
-      if cost then
+      -- a reagent without any price (nowhere on offer, no merchant): the recipe still shows, its
+      -- cost from the priced reagents and no profit (no coins, last in its category)
+      local unpriced = cost == nil
+      if unpriced then
+        cost = 0
+        for i = 1, #reagentList, 2 do
+          local u = buy(reagentList[i])
+          if u then cost = cost + u * reagentList[i + 1] end
+        end
+      end
+      do
         local reagents = {}
         for i = 1, #reagentList, 2 do table.insert(reagents, { i = reagentList[i], n = reagentList[i + 1] }) end
         local unitValue, onAH = sell(out)
         local value = unitValue * quantity
-        local profit = value - cost
-        if filter ~= "profit" or (profit > 0 and onAH) then
+        local profit = not unpriced and (value - cost) or nil
+        if filter ~= "profit" or ((profit or 0) > 0 and onAH) then
           local learn, need = nil, nil
           if not learned then
             if known then learn, need = learnInfo(professionID, known.id) else learn = "Quelle ?" end
@@ -102,8 +112,8 @@ local function rows(filter, professionID, charKey)
           -- 0 learned, 1 learnable now, 2 later: what can be made now comes first.
           local group = learned and 0 or (tooHigh and 2 or 1)
           table.insert(list, { itemID = out, recipe = rec[1], profession = data.name,
-            cat = known and known.r.cat, spell = known and known.id or rid, pid = professionID,
-            score = (2 - group) * 1e12 + profit, learned = learned, learn = learn, tooHigh = tooHigh,
+            cat = known and known.r.cat, scat = rec[5], spell = known and known.id or rid, pid = professionID,
+            score = (2 - group) * 1e12 + (profit or -1e11), learned = learned, unpriced = unpriced, learn = learn, tooHigh = tooHigh,
             unsure = ns.Item.Unsure(ns.Item(out)), nowPrice = ns.Item(out).now,
             cost = cost, unitCost = cost / quantity, value = value, profit = profit, onAH = onAH, demand = ns.Item(out).demand or 0,
             produced = quantity, reagents = reagents })
@@ -816,7 +826,7 @@ local function productEntries(pid)
   local lo, hi = levelRange(levelKey())
   for _, e in ipairs(list) do
     e.attractive, e.why, e.rank = ns.CraftAttractive(e)
-    if (key ~= "attractive" or e.attractive) and (key ~= "profit" or (e.profit > 0 and e.onAH))
+    if (key ~= "attractive" or e.attractive) and (key ~= "profit" or ((e.profit or 0) > 0 and e.onAH))
       and levelOK(e, lo, hi) then
       kept[#kept + 1] = e
     end
@@ -824,7 +834,11 @@ local function productEntries(pid)
   list = kept
   local groups, order = {}, {}
   for _, e in ipairs(list) do
+    -- the game's category of a scan, else the Blizzard API's (Data_Recipes cats: a profession no
+    -- household character has scanned)
+    local cats = ns.RecipeData[pid] and ns.RecipeData[pid].cats
     local c = e.catName and { n = e.catName, o = -e.catOrder } or category(e.cat)
+      or (e.scat and cats and cats[e.scat] and { n = cats[e.scat], o = e.scat })
     local name = c and c.n or "Weitere"
     local g = groups[name]
     if not g then
@@ -842,7 +856,8 @@ local function productEntries(pid)
     out[#out + 1] = { key = "h:" .. g.name, header = g.name }
     -- most profit on top within the category (gathering: the value per piece)
     table.sort(g.items, function(a, b)
-      local pa, pb = a.profit or a.value or 0, b.profit or b.value or 0
+      local pa = a.unpriced and -math.huge or (a.profit or a.value or 0)
+      local pb = b.unpriced and -math.huge or (b.profit or b.value or 0)
       if pa ~= pb then return pa > pb end
       return (a.recipe or "") < (b.recipe or "")
     end)
@@ -1328,10 +1343,10 @@ local function showProduct(entry, c)
     last = r.Slot
   end
   local values = {
-    money(e.cost),
+    e.unpriced and (money(e.cost) .. "|cffff6b6b + ?|r") or money(e.cost),
     money(e.value) .. (e.onAH and "" or "|cff999999  H|r"),
     ns.Item.DemandText(e) or "–",
-    signedMoney(e.profit),
+    e.unpriced and "|cff999999? (ein Reagenz ohne Preis)|r" or signedMoney(e.profit),
   }
   local labels = SUMMARY
   if e.gather then
@@ -1434,10 +1449,12 @@ local function overviewLines(p)
   return who, s and ns.CoinCount(s[3]) or 0, s and ns.CoinHot(s[4]) or false
 end
 
+local OVERVIEW_TOP, OVERVIEW_ROW = -50, 70 -- first card under the title bar, row height
+
 local function overviewSlot(parent, p)
   local NW = ns.NativeWindow
   local b = CreateFrame("Button", nil, parent)
-  b:SetSize(306, 56)
+  b:SetSize(306, OVERVIEW_ROW - 8)
   local hl = b:CreateTexture(nil, "HIGHLIGHT")
   hl:SetAllPoints()
   hl:SetColorTexture(1, 0.82, 0, 0.08)
@@ -1475,24 +1492,31 @@ local function overviewSlot(parent, p)
   return b
 end
 
-local function buildOverview(page)
-  local NW = ns.NativeWindow
+-- Two cards like Blizzard's "Berufe" window (its card art, gold title), right under the title
+-- bar and as tall as the window: crafting professions, then gathering ones, two per row.
+local function buildOverview(page, w)
   local craft, gather = professionList()
-  local function section(title, list, anchor, y)
-    local panel = NW.Panel(page, title)
-    panel:SetPoint("TOPLEFT", anchor or page, anchor and "BOTTOMLEFT" or "TOPLEFT", 0, y)
-    panel:SetPoint("RIGHT", page, "RIGHT", 0, 0)
+  local function section(title, list, y)
     local rowsN = math.ceil(#list / 2)
-    panel:SetHeight(44 + rowsN * 60)
+    local height = 52 + rowsN * OVERVIEW_ROW
+    local c = CreateFrame("Frame", nil, page)
+    c:SetSize(664, height)
+    c:SetPoint("TOPLEFT", w.frame, "TOPLEFT", 5, y)
+    local bg = c:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetAtlas("Profession-overview-Card")
+    c.Title = c:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    c.Title:SetPoint("TOPLEFT", 20, -16)
+    c.Title:SetText(title)
     for i, p in ipairs(list) do
-      local b = overviewSlot(panel, p)
+      local b = overviewSlot(c, p)
       local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-      b:SetPoint("TOPLEFT", panel, "TOPLEFT", 10 + col * 316, -36 - row * 60)
+      b:SetPoint("TOPLEFT", c, "TOPLEFT", 16 + col * 322, -40 - row * OVERVIEW_ROW)
     end
-    return panel
+    return height
   end
-  local first = section("Herstellungsberufe", craft, nil, -4)
-  section("Sammelberufe", gather, first, -8)
+  local h = section("Herstellungsberufe", craft, OVERVIEW_TOP)
+  section("Sammelberufe", gather, OVERVIEW_TOP - h + 4)
 end
 
 refreshOverview = function()
