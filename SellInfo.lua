@@ -252,6 +252,28 @@ local function forEachRow(list, fn)
   for _, row in ipairs(type(sf) == "table" and rawget(sf, "buttons") or {}) do fn(row) end
 end
 
+-- Runs fn(row) right after Blizzard filled a row (scrolling recycles the row frames with other
+-- data), so our cells never show the previous row's values or stay empty until the next timer
+-- tick. Modern ScrollBox: initialized-frame callback; else after every list refresh.
+local function onRowFilled(list, fn)
+  if rawget(list, "m4RowHook") then return end
+  list.m4RowHook = true
+  local box = rawget(list, "ScrollBox")
+  if type(box) == "table" and ScrollUtil and ScrollUtil.AddInitializedFrameCallback then
+    -- callback(frame, elementData); Blizzard's table builder fills the cells on the same event
+    -- (order not fixed), so ours runs now and once more on the next frame
+    ScrollUtil.AddInitializedFrameCallback(box, function(row)
+      ns.Safe(fn, row)
+      C_Timer.After(0, function() ns.Safe(fn, row) end)
+    end, list, false)
+  elseif type(box) == "table" and box.Update then
+    hooksecurefunc(box, "Update", function() forEachRow(list, function(row) ns.Safe(fn, row) end) end)
+  end
+  if list.RefreshScrollFrame then
+    hooksecurefunc(list, "RefreshScrollFrame", function() forEachRow(list, function(row) ns.Safe(fn, row) end) end)
+  end
+end
+
 local function rowData(row)
   local d = rawget(row, "rowData")
   if d == nil and row.GetRowData then
@@ -462,37 +484,40 @@ function SellInfo.RowUnit(d)
 end
 
 local probed = false
+local function updateAuctionRow(row)
+  local d = rowData(row)
+  local key = d and d.itemKey
+  local id = type(key) == "table" and key.itemID or nil
+  local cells = rawget(row, "cells")
+  if SellInfo.columns and type(cells) == "table" and cells[2] and cells[3] then
+    local costText, profitText = "", ""
+    if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
+    cellText(cells[2]):SetText(costText or "")
+    cellText(cells[3]):SetText(profitText or "")
+    if row.m4Info then row.m4Info:SetText("") end
+  else
+    local text
+    if id and not ((d.bidAmount or 0) > 0) then
+      text = SellInfo.AuctionText(id, SellInfo.RowUnit(d), d.quantity)
+    end
+    local fs = row.m4Info
+    if text or fs then rowText(row):SetText(text or "") end
+  end
+  if not probed and ns.db and d then
+    probed = true
+    local keys = {}
+    for k, v in pairs(row) do if type(v) == "table" then keys[#keys + 1] = tostring(k) end end
+    table.sort(keys)
+    ns.db.auctionsProbe = { row = table.concat(keys, ","), data = (d.buyoutAmount and "buyout " or "") .. (d.quantity and "qty" or ""),
+      t = time() }
+  end
+end
+
 local function updateAuctionRows(af)
   local list = auctionsList(af)
   if not list then return end
-  forEachRow(list, function(row)
-    local d = rowData(row)
-    local key = d and d.itemKey
-    local id = type(key) == "table" and key.itemID or nil
-    local cells = rawget(row, "cells")
-    if SellInfo.columns and type(cells) == "table" and cells[2] and cells[3] then
-      local costText, profitText = "", ""
-      if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
-      cellText(cells[2]):SetText(costText or "")
-      cellText(cells[3]):SetText(profitText or "")
-      if row.m4Info then row.m4Info:SetText("") end
-    else
-      local text
-      if id and not ((d.bidAmount or 0) > 0) then
-        text = SellInfo.AuctionText(id, SellInfo.RowUnit(d), d.quantity)
-      end
-      local fs = row.m4Info
-      if text or fs then rowText(row):SetText(text or "") end
-    end
-    if not probed and ns.db and d then
-      probed = true
-      local keys = {}
-      for k, v in pairs(row) do if type(v) == "table" then keys[#keys + 1] = tostring(k) end end
-      table.sort(keys)
-      ns.db.auctionsProbe = { row = table.concat(keys, ","), data = (d.buyoutAmount and "buyout " or "") .. (d.quantity and "qty" or ""),
-        t = time() }
-    end
-  end)
+  onRowFilled(list, updateAuctionRow)
+  forEachRow(list, updateAuctionRow)
 end
 
 -- One-time probe of Blizzard's table building blocks in this client (saved variables), for the
@@ -669,22 +694,27 @@ function SellInfo.BrowseValues(id, price)
   return pctText, ns.Item.DemandText(item) or "|cff999999–|r"
 end
 
-local function updateBrowseRows(list)
+local function updateBrowseRow(list, row)
   local cols = list.m4Cols
   if not cols then return end
-  forEachRow(list, function(row)
-    local d = rowData(row)
-    local cells = rawget(row, "cells")
-    if type(cells) ~= "table" then return end
-    local pc, dc = cells[cols.pct], cells[cols.demand]
-    if not (pc and dc) then return end
-    local key = d and d.itemKey
-    local id = type(key) == "table" and key.itemID or nil
-    local pctText, demandText = "", ""
-    if id then pctText, demandText = SellInfo.BrowseValues(id, d.minPrice) end
-    cellText(pc):SetText(pctText)
-    cellText(dc):SetText(demandText)
-  end)
+  local d = rowData(row)
+  local cells = rawget(row, "cells")
+  if type(cells) ~= "table" then return end
+  local pc, dc = cells[cols.pct], cells[cols.demand]
+  if not (pc and dc) then return end
+  local key = d and d.itemKey
+  local id = type(key) == "table" and key.itemID or nil
+  local pctText, demandText = "", ""
+  if id then pctText, demandText = SellInfo.BrowseValues(id, d.minPrice) end
+  cellText(pc):SetText(pctText)
+  cellText(dc):SetText(demandText)
+end
+
+local function updateBrowseRows(list)
+  if not list.m4Cols then return end
+  local fn = function(row) updateBrowseRow(list, row) end
+  onRowFilled(list, fn)
+  forEachRow(list, fn)
 end
 
 local function attachBrowse()
