@@ -402,15 +402,26 @@ Profit.IsOwnUse = isOwnUse
 
 local function round(x) return math.floor(x + 0.5) end
 
-local function row(id, group, f, p, kind)
+-- p: the pool (units left); left = units the household still holds of it (nil: not known).
+-- Units of the pool no longer held (vendored before that was logged, used, destroyed) are gone:
+-- their cost is booked as a write-off (in cost and profit), the stock is what is still there.
+local function row(id, group, f, p, kind, left)
+  local gone, goneValue = 0, 0
+  if left and p.q > left then
+    gone = p.q - left
+    goneValue = p.v * gone / p.q
+    p = { q = left, v = p.v - goneValue }
+  end
+  local cost = (group == OWN and round(f.materials) or round(f.soldCost)) + round(goneValue)
   return {
+    gone = gone, goneValue = round(goneValue),
     itemId = id, prof = group, kind = kind, name = ns.ItemName and ns.ItemName(id) or nil,
     used = f.used, usedValue = round(f.usedValue),
     crafted = f.crafted, sold = f.sold, bought = f.bought, spent = round(f.spent),
     revenue = round(f.revenue), materials = round(f.materials), fees = round(f.fees),
     cut = round(f.cut), depositsLost = round(f.depositsLost),
-    cost = group == OWN and round(f.materials) or round(f.soldCost),
-    profit = round(f.revenue) - (group == OWN and round(f.materials) or round(f.soldCost)) - round(f.fees),
+    cost = cost,
+    profit = round(f.revenue) - cost - round(f.fees),
     soldCost = round(f.soldCost), expired = f.expired, cancelled = f.cancelled,
     stockUnits = p.q, stockValue = round(p.v),
     unitCost = p.q > 0 and round(p.v / p.q) or nil,
@@ -449,6 +460,14 @@ local function itemRows(since, replayed)
   local rows = {}
   local held = Profit.HeldCounts and Profit.HeldCounts(true) -- defined further down
   local own = ownProfessions(act)
+  -- what the household still holds, shared by the crafted pool first, then the bought one
+  local leftCrafted, leftBought = {}, {}
+  if held then
+    for id, p in pairs(crafted) do leftCrafted[id] = math.min(p.q, held[id] or 0) end
+    for id in pairs(bought) do
+      leftBought[id] = math.max(0, (held[id] or 0) - (leftCrafted[id] or 0))
+    end
+  end
   local trade = other[TRADE] or {}
   for id, p in pairs(bought) do
     if p.q > 0 and not trade[id] then trade[id] = newFigures() end
@@ -462,7 +481,7 @@ local function itemRows(since, replayed)
       if material then
         -- a reagent: material of its profession (bought, used in crafts, rest sold or kept)
         if f.bought > 0 or f.used > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0 or p.q > 0 then
-          table.insert(rows, row(id, material, f, p, "material"))
+          table.insert(rows, row(id, material, f, p, "material", held and leftBought[id] or nil))
         end
         group = nil
       elseif group == TRADE and isOwnUse(id, act, held, bought[id]) then
@@ -475,7 +494,7 @@ local function itemRows(since, replayed)
       local show = group and (group ~= TRADE or p.q > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0)
       if group == OWN and (f.spent or 0) == 0 and f.sold == 0 then show = false end
       if show then
-        table.insert(rows, row(id, group, f, p))
+        table.insert(rows, row(id, group, f, p, nil, held and group == TRADE and leftBought[id] or nil))
       end
     end
   end
@@ -483,7 +502,7 @@ local function itemRows(since, replayed)
     local f = items[id] or newFigures()
     local p = crafted[id] or NONE
     if f.crafted > 0 or f.sold > 0 or f.fees > 0 or f.expired > 0 or f.cancelled > 0 or p.q > 0 then
-      table.insert(rows, row(id, prof, f, p, "product"))
+      table.insert(rows, row(id, prof, f, p, "product", held and leftCrafted[id] or nil))
     end
   end
   return rows
@@ -494,7 +513,7 @@ local function byProfit(a, b)
   return (a.name or tostring(a.itemId)) < (b.name or tostring(b.itemId))
 end
 
-local SUM_KEYS = { "used", "usedValue", "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
+local SUM_KEYS = { "gone", "goneValue", "used", "usedValue", "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
   "stockValue", "crafted", "sold", "bought", "spent", "soldCost", "expired", "cancelled" }
 
 Profit.SUM_KEYS = SUM_KEYS

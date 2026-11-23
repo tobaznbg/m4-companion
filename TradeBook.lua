@@ -432,9 +432,10 @@ end
 
 local function stockFigures(g, m, pr)
   return { sub = "Bestand – was vom Einkauf noch da ist (zum Einkaufspreis)", topTitle = "",
-    labels = { "Material übrig", "Produkte auf Lager", "Bestand" },
+    labels = { "Material übrig", "Produkte auf Lager", "Nicht mehr da (abgeschrieben)", "Bestand" },
     values = { string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)),
       string.format("%d Stück · %s", pr.stockUnits or 0, money(pr.stockValue)),
+      string.format("%d Stück · %s", (m.gone or 0) + (pr.gone or 0), money((m.goneValue or 0) + (pr.goneValue or 0))),
       signed((g.spent or 0) - (g.cost or 0)) } }
 end
 
