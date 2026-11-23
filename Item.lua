@@ -346,12 +346,11 @@ function Item.DemandText(e)
 end
 
 -- The demand level as a symbol, for the auction house list: red arrow down (niedrig, kaum),
--- orange dash (mittel), green arrow up (hoch), two green arrows up (sehr hoch); nil without data.
+-- orange dash (mittel), green arrow up (hoch), the raid star (sehr hoch); nil without data.
 -- The arrows are the vanilla tutorial arrows (they point down; the green one flipped for "up").
 local UP = "|TInterface\\Buttons\\UI-MicroStream-Green:14:14:0:0:32:32:0:32:32:0|t"
-local UP_SMALL = "|TInterface\\Buttons\\UI-MicroStream-Green:14:10:0:0:32:32:0:32:32:0|t"
 local DEMAND_ICONS = {
-  ["sehr hoch"] = UP_SMALL .. UP_SMALL,
+  ["sehr hoch"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:14:14|t",
   ["hoch"] = UP,
   ["mittel"] = "|cffff9933–|r",
   ["niedrig"] = "|TInterface\\Buttons\\UI-MicroStream-Red:14:14|t",
