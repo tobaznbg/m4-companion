@@ -395,7 +395,7 @@ local function areaFigures(g, items)
   if g.name == P.TRADE then
     return { sub = "Handel – im AH oder beim Händler gekauft und wieder verkauft", topTitle = "Größter Beitrag:",
       labels = { "Einkauf", "Verkauf", "Gebühren", "Marge", "Noch im Bestand", "Abgelaufen", "Gewinn" },
-      values = { money(g.spent), money(g.revenue), money(g.fees), pct(g.profit or 0, g.revenue), money(g.stockValue),
+      values = { money((g.spent or 0) + (g.pre or 0)), money(g.revenue), money(g.fees), pct(g.profit or 0, g.revenue), money(g.stockValue),
         string.format("%d×  " .. RED .. "-%s|r", (g.expired or 0) + (g.cancelled or 0), money(g.depositsLost)), signed(g.profit) },
       top = top }
   end
