@@ -93,10 +93,9 @@ local function addLines(tooltip, itemID)
   if not on("price") then
     -- no price line
   elseif item.now then
-    local cmp = ns.Item.RefCompare(item.now, item)
     local unsure = ns.Item.Unsure(item)
-    tooltip:AddDoubleLine(C .. "AH jetzt", ns.FormatMoney(item.now) .. (cmp and ("  (" .. cmp .. ")") or "")
-      .. (unsure and "  unsicher" or ""), 1, 1, 1, 1, unsure and 0.71 or 1, unsure and 0.28 or 1)
+    tooltip:AddDoubleLine(C .. "AH jetzt", ns.FormatMoney(item.now) .. (unsure and "  unsicher" or ""),
+      1, 1, 1, 1, unsure and 0.71 or 1, unsure and 0.28 or 1)
   else
     tooltip:AddLine(C .. "nicht im AH", 0.7, 0.7, 0.7)
   end
@@ -110,21 +109,17 @@ local function addLines(tooltip, itemID)
   if sold then
     tooltip:AddDoubleLine(C .. "Gilde verkauft", sold, 0.7, 0.7, 0.7, 1, 1, 1)
   end
+  -- trend (colored) and demand in one line
   local trend = on("trend") and ns.Item.TrendText(item)
-  if trend then
-    local up, down = item.direction == 1, item.direction == -1
-    tooltip:AddDoubleLine(C .. "Trend", trend, 0.7, 0.7, 0.7, up and 0.37 or (down and 1 or 0.8),
-      up and 0.83 or (down and 0.42 or 0.8), up and 0.55 or (down and 0.42 or 0.8))
-  end
   local demand = on("demand") and ns.Item.DemandText(item)
-  if demand then
-    if item.certain and item.certain >= 1 then
-      local n = math.floor(item.certain + 0.5)
-      demand = demand .. "  (mind. " .. (BreakUpLargeNumbers and BreakUpLargeNumbers(n) or tostring(n)) .. " / Tag)"
-    end
-    tooltip:AddDoubleLine(C .. "Nachfrage", demand, 0.7, 0.7, 0.7, 1, 1, 1)
+  if trend or demand then
+    local up, down = item.direction == 1, item.direction == -1
+    local tc = up and "|cff5fd38d" or (down and "|cffff6b6b" or "|cffcccccc")
+    local label = (trend and demand) and "Trend · Nachfrage" or (trend and "Trend" or "Nachfrage")
+    local value = (trend and (tc .. trend .. "|r") or "") .. ((trend and demand) and "  ·  " or "") .. (demand or "")
+    tooltip:AddDoubleLine(C .. label, value, 0.7, 0.7, 0.7, 1, 1, 1)
   end
-  -- Crafting: cost to make it, profit against selling it, and where the recipe comes from.
+  -- Crafting: cost to make it and profit against selling it (the recipe's details: "Alle Produkte").
   local craft = on("crafting") and crafting(itemID)
   if craft then
     local profit = ns.Item.SellNet(item) - craft.cost
@@ -133,7 +128,6 @@ local function addLines(tooltip, itemID)
     tooltip:AddDoubleLine("    Herstellkosten", ns.FormatMoney(math.floor(craft.cost + 0.5)), 0.7, 0.7, 0.7, 1, 1, 1)
     tooltip:AddDoubleLine("    Gewinn", (profit >= 0 and "|cff5fd38d" or "|cffff6b6b-")
       .. ns.FormatMoney(math.floor(math.abs(profit) + 0.5)) .. "|r", 0.7, 0.7, 0.7, 1, 1, 1)
-    tooltip:AddDoubleLine("    Rezept", craft.prof .. " · " .. craft.source, 0.7, 0.7, 0.7, 1, 1, 1)
   end
   -- Recipe items: what the recipe teaches and what making its product brings (Crafting.lua).
   local teach = on("recipe") and ns.RecipeTeachInfo and ns.RecipeTeachInfo(itemID)
@@ -160,21 +154,8 @@ local function addLines(tooltip, itemID)
     end
     tooltip:AddLine(C .. "  " .. table.concat(parts, " · "), 0.8, 0.8, 0.8)
   end
-  -- Gap between the auction house block and recommendation / merchant price.
-  if on("advice") or on("vendor") then tooltip:AddLine(" ") end
-  -- Decision as in the Bestand tab; bag entry if the item is carried (bound state).
-  if ns.Inventory and on("advice") then
-    local inv = ns.db.inventory and ns.db.inventory[ns.CharKey()]
-    local entry = inv and ((inv.bags and inv.bags[itemID]) or (inv.bank and inv.bank[itemID]))
-    if not entry then
-      local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-      entry = { n = 1, q = getInfo and select(3, getInfo(itemID)) or 1 }
-    end
-    local action, reason = ns.Inventory.Advise(itemID, entry)
-    local colors = { AH = { 0.37, 0.83, 0.55 }, ["Händler"] = { 0.85, 0.79, 0.64 }, behalten = { 0.6, 0.6, 0.6 } }
-    local c = colors[action] or colors.behalten
-    tooltip:AddDoubleLine(C .. "Empfehlung", action, 1, 1, 1, c[1], c[2], c[3])
-  end
+  -- Gap between the auction house block and the merchant price.
+  if on("vendor") then tooltip:AddLine(" ") end
   if on("vendor") then
     tooltip:AddDoubleLine(C .. "Händler zahlt", item.vendorSell and ns.FormatMoney(item.vendorSell) or "nichts",
       1, 1, 1, 1, 1, 1)
