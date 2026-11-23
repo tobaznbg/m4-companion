@@ -148,6 +148,7 @@ end
 -- Real data ------------------------------------------------------------------------------------
 
 local GREEN, RED, MUTED = "|cff5fd38d", "|cffff6b6b", "|cff999999"
+local GOLD, WHITE = { 1, 0.82, 0 }, { 1, 1, 1 } -- areas in the list gold, their parts white
 local function money(c) return ns.FormatMoney(math.floor((c or 0) + 0.5), true) end
 local function signed(c)
   c = math.floor((c or 0) + 0.5)
@@ -742,7 +743,7 @@ local function buildLedger(page)
           local all = {}
           for _, r in ipairs(prods) do all[#all + 1] = r end
           for _, r in ipairs(mats) do all[#all + 1] = r end
-          entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
+          entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon, color = GOLD,
             value = signed(g.profit), figures = overviewFigures(g), items = all }
           local buys, sells, stock = {}, {}, {}
           for _, r in ipairs(all) do
@@ -757,29 +758,29 @@ local function buildLedger(page)
           table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
           table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
           if #buys > 0 then
-            entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
+            entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, color = WHITE, name = "Einkauf",
               title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent) .. "|r",
               figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
           end
           if g.tin > 0 then
-            entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, name = "Erhalten",
+            entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, color = WHITE, name = "Erhalten",
               title = g.name .. " – Erhalten", icon = icon, value = RED .. "-" .. money(g.tin) .. "|r",
               figures = receivedFigures(g, inRows), items = got, listMode = "buy", heads = { "Item", "Stück", "Wert" } }
           end
           if g.tout > 0 then
             table.sort(outRows, function(a, b) return a.v > b.v end)
-            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Verarbeitet",
+            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, color = WHITE, name = "Verarbeitet",
               title = g.name .. " – Verarbeitet", icon = icon, value = signed(g.tout),
               figures = handoverFigures(g, outRows), items = outRows, listMode = "out", heads = { "Item", "Stück", "Wert" } }
           end
-          entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf",
+          entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, color = WHITE, name = "Verkauf",
             title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
             figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
-          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, name = "Bestand",
+          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = WHITE, name = "Bestand",
             title = g.name .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
             figures = stockFigures(g, m, pr), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
         else
-          entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
+          entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon, color = GOLD,
             value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }
         end
       end
