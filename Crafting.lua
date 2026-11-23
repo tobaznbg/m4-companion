@@ -1322,10 +1322,18 @@ local function cardScroll(c)
   local ok, s = pcall(CreateFrame, "ScrollFrame", nil, c, "UIPanelScrollFrameTemplate")
   if not ok or not s then s = CreateFrame("ScrollFrame", nil, c) end
   s.scrollBarHideable = true
+  -- full width: the content keeps its own margins (icon 22 left, RIGHT_EDGE right), the bar sits
+  -- in the right margin instead of adding to it
   s:SetPoint("TOPLEFT", c, "TOPLEFT", 0, -4)
-  s:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", -24, 6)
+  s:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", 0, 6)
+  local bar = rawget(s, "ScrollBar")
+  if type(bar) == "table" then
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPRIGHT", s, "TOPRIGHT", -4, -18)
+    bar:SetPoint("BOTTOMRIGHT", s, "BOTTOMRIGHT", -4, 18)
+  end
   local content = CreateFrame("Frame", nil, s)
-  content:SetSize(math.max(1, (c:GetWidth() or 0) - 24), 1)
+  content:SetSize(math.max(1, c:GetWidth() or 0), 1)
   s:SetScrollChild(content)
   s:EnableMouseWheel(true)
   s:SetScript("OnMouseWheel", function(self, delta)

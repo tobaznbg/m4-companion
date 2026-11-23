@@ -57,7 +57,9 @@ function Detail.RollingMedian(prices, step, window)
 end
 
 -- Width of the scroll body: the native frame has a wider border and inset.
-local function contentWidth() return skin == "blizzard" and WIDTH - 42 or WIDTH - 26 end
+-- (native: as wide as the scroll frame, so the right margin equals the left one; the thin bar
+-- sits in the margin)
+local function contentWidth() return skin == "blizzard" and WIDTH - 28 or WIDTH - 26 end
 -- Line color of the chart and highlight color of the active view: gold in the native look.
 local function lineColor() return skin == "blizzard" and GOLD_RGB or ns.Style.C.accent end
 local render -- forward declared: used by Show/Toggle/Refresh, defined below
@@ -1084,7 +1086,7 @@ local function applySkin()
     frame.icon:SetSize(24, 24)
     frame.name:SetFontObject(GameFontHighlightLarge)
     scroll:SetPoint("TOPLEFT", 14, -72)
-    scroll:SetPoint("BOTTOMRIGHT", -24, 14)
+    scroll:SetPoint("BOTTOMRIGHT", -14, 14)
   else
     frame.head:SetPoint("TOPLEFT", 6, -4)
     frame.head:SetPoint("RIGHT", frame, "RIGHT", -32, 0)
