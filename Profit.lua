@@ -526,6 +526,13 @@ local function itemRows(since, replayed)
   local held = Profit.HeldCounts and Profit.HeldCounts(true) -- defined further down
   local own = ownProfessions(act)
   local function booked(id) return not since or (act.lastT[id] or 0) >= since end
+  -- another house than the home one shown (ledger's choice): its trades only - the stock and
+  -- its write-offs belong to the household at home
+  local away = houseFilter and ns.AuctionHouse and ns.AuctionHouse.Home and houseFilter ~= ns.AuctionHouse.Home()
+  if away then
+    held = nil
+    bought, crafted = {}, {}
+  end
   -- what the household still holds, shared by the crafted pool first, then the bought one
   local leftCrafted, leftBought = {}, {}
   if held then
