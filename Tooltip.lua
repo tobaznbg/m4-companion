@@ -37,6 +37,8 @@ local SOURCES = { ["6"] = "Lehrer", ["5"] = "Händler", ["2"] = "Drop", ["4"] = 
 
 -- "gelernt", "Lehrer ab 165 (24s)", "Drop ab 300" or "Quelle unbekannt".
 local function source(pid, itemID)
+  -- the household's knowledge and the recipe sources, as in "Alle Produkte" (Crafting.lua)
+  if ns.RecipeLearnShort then return ns.RecipeLearnShort(pid, itemID) or "Quelle unbekannt" end
   local found = scanned(pid, itemID)
   if found and found.learned then return "|cff5fd38dgelernt|r" end
   local data = ns.DataBySkillLine and ns.DataBySkillLine[pid]

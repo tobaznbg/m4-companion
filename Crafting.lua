@@ -1046,6 +1046,33 @@ local function sourceLines(pid, spell)
   return #lines > 0 and lines or nil
 end
 
+-- One short line how the household stands with the recipe that makes an item, the same in the
+-- card, the market data window and the tooltip: "gelernt (Lok)", "Rezept da: Lokm (Taschen)", the
+-- first way to learn it from the recipe sources ("Drop: zufällig (Weltdrop)"), else the skill
+-- data's "Lehrer ab 165"; nil when nothing is known.
+function ns.RecipeLearnShort(pid, itemID)
+  local knower, scan = knowerOf(pid)
+  local spell
+  for sid, r in pairs(scan and scan.recipes or {}) do
+    if r.out == itemID then
+      if r.learned then
+        local who = knower ~= ns.CharKey() and (" (" .. (knower:match("^[^-]+") or knower) .. ")") or ""
+        return "|cff5fd38dgelernt" .. who .. "|r"
+      end
+      spell = spell or sid
+    end
+  end
+  spell = spell or spellByItem(pid, itemID)
+  if not spell then return nil end
+  local recipeItem = recipeItemOf(pid, spell)
+  local held = recipeItem and heldBy(recipeItem) or {}
+  if #held > 0 then return "|cff5fd38dRezept da: " .. table.concat(held, ", ") .. "|r" end
+  local src = sourceLines(pid, spell)
+  if src and src[1] then return src[1].text end
+  local text = learnInfo(pid, spell)
+  return text ~= "unbekannt" and text or nil
+end
+
 -- Where an item drops, for any item (market search, item detail): the creatures of
 -- Data_FarmSpots that loot or skin it (wowhead's measured share of kills / skins) and, for a
 -- recipe item, the recipe sources' drops (dd / dw / dr). Built into one index on first use.
