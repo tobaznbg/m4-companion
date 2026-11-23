@@ -43,6 +43,11 @@ local NEUTRAL_TOWNS = {
 
 local open = nil      -- { house, npc = id, name, guess } while the auction house is open
 local listeners = {}
+-- The one house choice of every window (AH.Chooser): nil = automatic (home house, at an
+-- auctioneer that one). A choice holds until an auction house opens or closes or the game
+-- reloads - then the automatic house applies again.
+local manual = nil
+local viewListeners = {}
 
 local function factionKey(f)
   if f == "Alliance" then return "A" end
@@ -95,12 +100,25 @@ function AH.Auto()
   return playerHouse()
 end
 
--- A view of another house (the ledger's choice), only while AH.WithView runs.
+-- A view of another house, only while AH.WithView runs.
 local view = nil
 
--- The house the data is for: the viewed one while a view runs, else the automatic one.
+-- The house the data is for: the viewed one while a view runs, else the chosen one, else the
+-- automatic one.
 function AH.Current()
-  return view or AH.Auto()
+  return view or manual or AH.Auto()
+end
+
+-- The chosen house (nil: automatic) and setting it; fn() of AH.OnViewChange runs on a change
+-- (every window redraws on the new house).
+function AH.Manual() return manual end
+function AH.OnViewChange(fn) table.insert(viewListeners, fn) end
+local function viewChanged() for _, fn in ipairs(viewListeners) do ns.Safe(fn) end end
+function AH.SetManual(house)
+  local new = (house and house ~= AH.Auto()) and house or nil
+  if new == manual then return end
+  manual = new
+  viewChanged()
 end
 
 -- Runs fn(...) with every reader (scan data, item prices) on `house`; returns fn's results.
@@ -235,6 +253,8 @@ ns.On("AUCTION_HOUSE_SHOW", function()
   local previous = AH.Auto()
   local house, id, name, guess = detect()
   open = { house = house, npc = id, name = name, guess = guess }
+  -- at an auctioneer its house applies (a choice made before ends)
+  if manual then manual = nil; viewChanged() end
   if house ~= previous then
     for _, fn in ipairs(listeners) do ns.Safe(fn, house, previous) end
   end
@@ -244,6 +264,7 @@ ns.On("AUCTION_HOUSE_CLOSED", function()
   if not open then return end
   local previous = open.house
   open = nil
+  if manual then manual = nil; viewChanged() end
   local house = AH.Auto()
   if house ~= previous then
     for _, fn in ipairs(listeners) do ns.Safe(fn, house, previous) end
@@ -406,10 +427,10 @@ local function choiceFrame(target)
   return f
 end
 
+-- A choice of the house: the one global choice (AH.SetManual), shown alike in every window.
 function AH.Chooser(parent, width, onChange)
-  local sel = nil -- nil: the automatic house
   local d
-  local function selected() return sel or AH.Auto() end
+  local function selected() return manual or AH.Auto() end
   local function options()
     local auto, opts = AH.Auto(), {}
     for _, key in ipairs(AH.KEYS) do
@@ -418,7 +439,7 @@ function AH.Chooser(parent, width, onChange)
     return opts
   end
   local function choose(key)
-    sel = key ~= AH.Auto() and key or nil
+    AH.SetManual(key)
     d.Update()
     if onChange then ns.Safe(onChange, selected()) end
   end
@@ -445,21 +466,21 @@ function AH.Chooser(parent, width, onChange)
   end
   local border = choiceFrame(d)
   function d.Update()
-    if sel == AH.Auto() then sel = nil end
     for _, o in ipairs(options()) do
       if o.key == selected() and d.SetText then d:SetText(o.label) end
     end
     if d.GenerateMenu then pcall(d.GenerateMenu, d) end
-    border.Set(sel == nil)
+    border.Set(manual == nil)
   end
   d.Selected = selected
-  function d.IsAuto() return sel == nil end
-  -- sets the choice from outside (nil: the automatic house); no onChange
+  function d.IsAuto() return manual == nil end
+  -- sets the choice from outside (nil keeps it); no onChange
   function d.Select(house)
-    sel = (house and house ~= AH.Auto()) and house or nil
+    if house then AH.SetManual(house) end
     d.Update()
   end
   AH.OnChange(function() d.Update() end)
+  AH.OnViewChange(function() d.Update() end)
   d.Update()
   return d
 end

@@ -1092,6 +1092,8 @@ local function create()
   frame.head = head
   -- right in the head: which auction house the figures are of (green = automatic, red = chosen)
   frame.house = ns.AuctionHouse.Chooser(frame, 104, function() render() end)
+  -- the house chosen in another window: this one follows
+  ns.AuctionHouse.OnViewChange(function() if frame:IsShown() then ns.Safe(render) end end)
   scroll, body = Style.Scroll(frame)
   frame:Hide()
 end

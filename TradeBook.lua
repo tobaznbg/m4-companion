@@ -1548,6 +1548,13 @@ local function refreshCurrent()
   for _, d in pairs(choices) do if d.Update then d.Update() end end
 end
 
+-- the house chosen in another window (market data, Alle Produkte): the ledger follows
+if ns.AuctionHouse and ns.AuctionHouse.OnViewChange then
+  ns.AuctionHouse.OnViewChange(function()
+    if window and window.frame:IsShown() then ns.Safe(refreshCurrent) end
+  end)
+end
+
 local function buildChoices(w)
   local f = w.frame
   local charLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

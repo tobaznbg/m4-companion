@@ -1734,6 +1734,10 @@ local function createProducts()
   local NW = ns.NativeWindow
   productsWindow = NW.New({ name = "M4CompanionProducts", title = "Alle Produkte", icon = "Interface\\Icons\\INV_Misc_Coin_02" })
   productsWindow.frame:HookScript("OnShow", function() Products.SyncTab() end)
+  -- the house chosen in any window (ledger, market data): prices, profit and coins follow
+  ns.AuctionHouse.OnViewChange(function()
+    if productsWindow.frame:IsShown() then ns.Safe(refreshProducts); ns.Safe(refreshOverview) end
+  end)
   productsWindow.frame:HookScript("OnHide", function() Products.SyncTab() end)
   -- side tabs like Blizzard's profession window: the overview, then the chosen profession's recipes
   productsWindow:AddTab({ key = "overview", title = "Berufsübersicht", icon = OVERVIEW_ICON, overview = true,
@@ -1753,6 +1757,11 @@ local function createProducts()
           ns.db.ui.productsLevel = key
           refreshProducts()
         end },
+        -- the one house choice of all windows (AuctionHouse.SetManual): Horde, Allianz, Neutral
+        { title = "Auktionshaus", options = { { key = "H", label = "Horde" }, { key = "A", label = "Allianz" },
+            { key = "N", label = "Neutral" } },
+          get = function() return ns.AuctionHouse.Current() end,
+          set = function(key) ns.AuctionHouse.SetManual(key) end },
         { title = "Mindestmarge", options = MARGINS, get = marginKey, set = function(key)
           ns.db.ui = ns.db.ui or {}
           ns.db.ui.productsMargin = key
