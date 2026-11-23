@@ -412,14 +412,30 @@ local function overviewFigures(g)
       pct(g.profit or 0, g.revenue), signed(g.profit) } }
 end
 
--- The bought material of a profession: bought, used in crafts, rest sold raw or still there.
-local function materialFigures(g)
-  return { sub = "Material – gekauft, verarbeitet, Rest verkauft", topTitle = "",
-    labels = { "Einkauf", "In Produkte verarbeitet", "Roh verkauft", "Gebühren", "Noch vorhanden", "Ergebnis (Restverkauf)" },
-    values = { RED .. "-" .. money(g.spent) .. "|r",
-      string.format("%d Stück · %s", g.used or 0, money(g.usedValue)),
-      string.format("%d Stück · %s", g.sold or 0, money(g.revenue)), money(g.fees),
-      string.format("%d Stück · %s", g.stockUnits or 0, money(g.stockValue)), signed(g.profit) } }
+-- The three parts of a profession with bought material; they add up to its profit:
+-- Einkauf (all material bought) + Verkauf netto (all sales after fees) + Bestand (what of it is
+-- still there, at cost: material left and products in stock) = Gewinn.
+local function buyFigures(m)
+  return { sub = "Einkauf – alles Material, das du gekauft hast", topTitle = "",
+    labels = { "Einkauf", "Gekauft", "In Produkte verarbeitet", "Roh wieder verkauft", "Noch vorhanden" },
+    values = { RED .. "-" .. money(m.spent) .. "|r", (m.bought or 0) .. " Stück",
+      string.format("%d Stück · %s", m.used or 0, money(m.usedValue)),
+      string.format("%d Stück", m.sold or 0), string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)) } }
+end
+
+local function sellFigures(g, m, pr)
+  return { sub = "Verkauf – Produkte und roh verkauftes Material, nach Gebühren", topTitle = "",
+    labels = { "Erlös Produkte", "Erlös Material (roh)", "Gebühren", "Verkauft", "Verkauf netto" },
+    values = { money(pr.revenue), money(m.revenue), RED .. "-" .. money(g.fees) .. "|r",
+      string.format("%d Stück", (pr.sold or 0) + (m.sold or 0)), signed((g.revenue or 0) - (g.fees or 0)) } }
+end
+
+local function stockFigures(g, m, pr)
+  return { sub = "Bestand – was vom Einkauf noch da ist (zum Einkaufspreis)", topTitle = "",
+    labels = { "Material übrig", "Produkte auf Lager", "Bestand" },
+    values = { string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)),
+      string.format("%d Stück · %s", pr.stockUnits or 0, money(pr.stockValue)),
+      signed((g.spent or 0) - (g.cost or 0)) } }
 end
 
 local AREA_ICONS = { trade = "Interface\\Icons\\INV_Misc_Coin_02", farmed = "Interface\\Icons\\INV_Misc_Bag_10",
@@ -550,15 +566,19 @@ local function buildLedger(page)
     for _, r in ipairs(entry.items) do
       local value = entry.isLoot and money(r.revenue) or resultText(r)
       local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
-      if r.kind == "material" and entry.materialList then
-        -- the material list: units bought, what they cost (column "Einkauf")
-        units, value = MUTED .. (r.bought or 0) .. " gek.|r", RED .. "-" .. money(r.spent) .. "|r"
+      local mode = entry.listMode
+      if mode == "buy" then
+        units, value = tostring(r.bought or 0), RED .. "-" .. money(r.spent) .. "|r"
+      elseif mode == "sell" then
+        units, value = tostring(r.sold or 0), signed((r.revenue or 0) - (r.fees or 0))
+      elseif mode == "stock" then
+        units, value = tostring(r.stockUnits or 0), money(r.stockValue)
       end
       rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), r.name or ns.ItemName(r.itemId) or "?",
         units, value, onClick = function() showItem(r, true) end,
         ownUseMenu = r.prof == ns.Profit.TRADE or r.prof == ns.Profit.OWN }
     end
-    area.SetItems(rows, entry.materialList and { "Item", "Stück", "Einkauf" } or nil)
+    area.SetItems(rows, entry.heads)
   end
 
   local split = NW.Split(page, {
@@ -636,12 +656,24 @@ local function buildLedger(page)
         for _, r in ipairs(mats) do all[#all + 1] = r end
         entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
           value = signed(g.profit), figures = overviewFigures(g), items = all }
-        entries[#entries + 1] = { key = g.name .. ":mat", areaEntry = true, indent = 14, name = "Material",
-          title = g.name .. " – Material", icon = icon, value = signed(m.profit),
-          figures = materialFigures(m), items = mats, materialList = true }
-        entries[#entries + 1] = { key = g.name .. ":prod", areaEntry = true, indent = 14, name = "Produkte",
-          title = g.name .. " – Produkte", icon = icon, value = signed(pr.profit),
-          figures = areaFigures(pr, prods), items = prods }
+        local buys, sells, stock = {}, {}, {}
+        for _, r in ipairs(all) do
+          if r.kind == "material" and (r.bought or 0) > 0 then buys[#buys + 1] = r end
+          if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
+          if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
+        end
+        table.sort(buys, function(a, b) return (a.spent or 0) > (b.spent or 0) end)
+        table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
+        table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
+        entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
+          title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent) .. "|r",
+          figures = buyFigures(m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+        entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf (netto)",
+          title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
+          figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
+        entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, name = "Bestand",
+          title = g.name .. " – Bestand", icon = icon, value = signed((g.spent or 0) - (g.cost or 0)),
+          figures = stockFigures(g, m, pr), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
       else
         entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
           value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }
