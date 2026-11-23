@@ -53,3 +53,50 @@ if ns.On then
   ns.On("ITEM_SEARCH_RESULTS_UPDATED", function(_, itemKey) ns.Safe(probeSearch, "item", itemKey) end)
   ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(_, itemID) ns.Safe(probeSearch, "commodity", itemID) end)
 end
+
+-- Full scan probe: does the full scan (C_AuctionHouse.ReplicateItems) know the seller, and when?
+-- After REPLICATE_ITEM_LIST_UPDATE every row is re-read at a few delays: how many rows have an
+-- owner and hasAllInfo, plus every return value of the first rows (is there an auction id?).
+-- After the 10 s pass the item data of rows still missing info is requested (as TSM does).
+-- ns.db.replicateProbe = { t, passes = { { after, n, owner, allInfo }… }, sample = { … } }
+local REPL_PASSES = { 0, 2, 10, 30, 90 }
+local function replPass(probe, after)
+  local api = C_AuctionHouse
+  local n = api.GetNumReplicateItems and api.GetNumReplicateItems() or 0
+  local owner, allInfo, missing = 0, 0, {}
+  for i = 0, n - 1 do
+    local r = { api.GetReplicateItemInfo(i) }
+    if r[14] and r[14] ~= "" then owner = owner + 1 end
+    if r[18] then allInfo = allInfo + 1 elseif r[17] then missing[r[17]] = true end
+  end
+  table.insert(probe.passes, { after = after, n = n, owner = owner, allInfo = allInfo })
+  if after == 0 or after == REPL_PASSES[#REPL_PASSES] then
+    for i = 0, math.min(n, 5) - 1 do
+      local packed = { n = select("#", api.GetReplicateItemInfo(i)), api.GetReplicateItemInfo(i) }
+      local row = { at = after, index = i, count = packed.n }
+      for k = 1, packed.n do row["v" .. k] = tostring(packed[k]) end
+      table.insert(probe.sample, row)
+    end
+  end
+  if after == 10 and C_Item and C_Item.RequestLoadItemDataByID then
+    local asked = 0
+    for itemID in pairs(missing) do
+      C_Item.RequestLoadItemDataByID(itemID); asked = asked + 1
+    end
+    probe.requested = asked
+  end
+end
+local replFrame = CreateFrame("Frame")
+replFrame:SetScript("OnEvent", function(self)
+  self:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
+  local probe = { t = time(), passes = {}, sample = {} }
+  ns.db.replicateProbe = probe
+  for _, after in ipairs(REPL_PASSES) do
+    C_Timer.After(after, function() ns.Safe(replPass, probe, after) end)
+  end
+end)
+if C_AuctionHouse and C_AuctionHouse.ReplicateItems then
+  hooksecurefunc(C_AuctionHouse, "ReplicateItems", function()
+    replFrame:RegisterEvent("REPLICATE_ITEM_LIST_UPDATE")
+  end)
+end
