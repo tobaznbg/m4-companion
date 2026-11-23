@@ -1320,12 +1320,19 @@ local function productCard(c)
       if not (e and ns.ShoppingList and ns.ShoppingList.AddRecipe) then return end
       local w = ns.ShoppingList.AddRecipe({ rid = e.spell, out = e.itemID, name = e.recipe, pid = e.pid,
         q = e.produced, reagents = e.reagents }, IsShiftKeyDown and IsShiftKeyDown() and 5 or 1)
+      -- not learned yet: its pattern on the list too (auction house when offered, else its source)
+      local pattern = not e.learned and recipeItemOf(e.pid, e.spell)
+      if pattern and ns.ShoppingList.AddPattern then
+        local now = ns.Item(pattern).now
+        ns.ShoppingList.AddPattern({ rid = e.spell, pid = e.pid, item = pattern, name = e.recipe,
+          way = now and "ah" or "vendor", price = now })
+      end
       if w and ns.ShoppingList.Show then ns.ShoppingList.Show(w.rid) end
     end)
     shop:SetScript("OnEnter", function(self)
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
       GameTooltip:SetText("Auf die Einkaufsliste")
-      GameTooltip:AddLine("Ein Mal pro Klick, mit Shift fünf Mal; was dein Haushalt hat, wird abgezogen.", 1, 1, 1, true)
+      GameTooltip:AddLine("Ein Mal pro Klick, mit Shift fünf Mal; was dein Haushalt hat, wird abgezogen. Ein noch nicht gelerntes Rezept kommt mit auf die Liste.", 1, 1, 1, true)
       GameTooltip:Show()
     end)
     shop:SetScript("OnLeave", function() GameTooltip:Hide() end)
