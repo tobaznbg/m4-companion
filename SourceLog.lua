@@ -62,6 +62,20 @@ local function npcEntry(part)
   return e
 end
 
+-- Recipe items a merchant sells in limited stock per the recipe sources (by NPC name).
+local function expectedLimited(name)
+  local out = {}
+  for _, src in pairs(ns.RecipeSources or {}) do
+    for _, entry in pairs(src.recipes or {}) do
+      for _, way in ipairs(type(entry) == "table" and entry or {}) do
+        local npc = type(way) == "table" and way[1] == "limited" and src.npcs and src.npcs[way[2]]
+        if npc and npc[1] == name and entry.item then out[entry.item] = true end
+      end
+    end
+  end
+  return out
+end
+
 local function recordMerchant()
   if not (ns.db and GetMerchantNumItems) then return end
   local items = {}
@@ -92,11 +106,13 @@ local function recordMerchant()
   -- stock of the limited recipes this visit; one seen limited before and missing now: sold out
   local stock = {}
   for id, v in pairs(e.items) do if v.lim and not items[id] then stock[id] = 0 end end
+  -- limited per the recipe sources and not there: sold out (or not sold in Forever)
+  for id in pairs(expectedLimited(e.name)) do if not items[id] then stock[id] = 0 end end
   for id, v in pairs(items) do
     if v.lim then stock[id] = v.n or 0 end
     e.items[id] = v
   end
-  if next(stock) then
+  do -- every visit (also without limited stock: the NPC copy is worth knowing)
     e.visits = e.visits or {}
     local last = e.visits[#e.visits]
     -- one entry per visit (MERCHANT_UPDATE fires several times while the window is open)
@@ -105,7 +121,7 @@ local function recordMerchant()
     local guid = UnitGUID and UnitGUID("npc")
     local _, _, server, instance, zone = strsplit("-", guid or "")
     local copy = server and (server .. "-" .. (instance or "") .. "-" .. (zone or "")) or nil
-    if last and time() - last.t < 120 then last.s, last.copy = stock, copy
+    if last and time() - last.t < 120 and last.copy == copy then last.s = stock -- (a layer swap is a new visit)
     else table.insert(e.visits, { t = time(), s = stock, copy = copy }) end
     while #e.visits > 50 do table.remove(e.visits, 1) end
   end
