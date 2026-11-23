@@ -23,7 +23,8 @@
 --   revenue       sale price before the cut (gross)
 --   fees          auction house cut + lost deposits (cut and depositsLost also separate)
 --   materials     bought reagents used by crafts (farmed = 0); for TRADE the purchase price
---   profit        revenue - materials - fees
+--   cost          what the sold units cost (soldCost; Eigenbedarf: what was spent)
+--   profit        revenue - cost - fees: unsold units (crafted or bought) are stock, no loss
 --   stock         units not sold or used yet x their average cost (now, not "since"):
 --                 crafted units in their profession, bought units in TRADE
 -- Per item also (in the period): bought / spent (units and copper bought at the auction
@@ -340,7 +341,8 @@ local function row(id, group, f, p)
     crafted = f.crafted, sold = f.sold, bought = f.bought, spent = round(f.spent),
     revenue = round(f.revenue), materials = round(f.materials), fees = round(f.fees),
     cut = round(f.cut), depositsLost = round(f.depositsLost),
-    profit = round(f.revenue) - round(f.materials) - round(f.fees),
+    cost = group == OWN and round(f.materials) or round(f.soldCost),
+    profit = round(f.revenue) - (group == OWN and round(f.materials) or round(f.soldCost)) - round(f.fees),
     soldCost = round(f.soldCost), expired = f.expired, cancelled = f.cancelled,
     stockUnits = p.q, stockValue = round(p.v),
     unitCost = p.q > 0 and round(p.v / p.q) or nil,
@@ -416,7 +418,7 @@ local function byProfit(a, b)
   return (a.name or tostring(a.itemId)) < (b.name or tostring(b.itemId))
 end
 
-local SUM_KEYS = { "revenue", "materials", "fees", "cut", "depositsLost", "profit", "stockUnits",
+local SUM_KEYS = { "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
   "stockValue", "crafted", "sold", "bought", "spent", "soldCost", "expired", "cancelled" }
 
 local function professions(rows)
@@ -436,7 +438,7 @@ local function professions(rows)
 end
 
 local function totals(groups)
-  local t = { revenue = 0, materials = 0, fees = 0, cut = 0, depositsLost = 0, profit = 0,
+  local t = { revenue = 0, materials = 0, cost = 0, fees = 0, cut = 0, depositsLost = 0, profit = 0,
     stockUnits = 0, stockValue = 0 }
   for _, s in ipairs(groups) do
     for key in pairs(t) do t[key] = t[key] + s[key] end

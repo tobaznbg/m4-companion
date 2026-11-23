@@ -221,7 +221,7 @@ local function buildOverview(page, w)
   local pnl = card(page, w, 5, TOP, CARD_W, TOP_H, "Gewinn und Verlust")
   local pnlSlot = NW.Slot(pnl, "Interface\\Icons\\INV_Misc_Coin_02", "Gewinn", "")
   pnlSlot:SetPoint("TOPLEFT", 16, -40)
-  local pnlFig = NW.Figures(pnl, pnlSlot, { "Umsatz", "Einkauf", "Gebühren" }, { line = false, gap = 8, step = 14 })
+  local pnlFig = NW.Figures(pnl, pnlSlot, { "Umsatz", "Wareneinsatz", "Gebühren" }, { line = false, gap = 8, step = 14 })
   pnlFig.labels[1]:ClearAllPoints()
   pnlFig.labels[1]:SetPoint("TOPLEFT", pnlSlot, "BOTTOMLEFT", 2, -8)
   pnlFig.SetWidth(CARD_W - 40)
@@ -256,7 +256,7 @@ local function buildOverview(page, w)
     local sales = 0
     for _, g in ipairs(report and report.groups or {}) do sales = sales + (g.sold or 0) end
     pnlSlot.Sub:SetText(signed(t.profit) .. MUTED .. "  ·  " .. sales .. " verkauft|r")
-    pnlFig.values[1]:SetText(money(t.revenue)); pnlFig.values[2]:SetText(money(t.materials)); pnlFig.values[3]:SetText(money(t.fees))
+    pnlFig.values[1]:SetText(money(t.revenue)); pnlFig.values[2]:SetText(money(t.cost)); pnlFig.values[3]:SetText(money(t.fees))
     local st = report and report.stockTotals or {}
     stockSlot.Sub:SetText(signed(st.gain))
     stockFig.values[1]:SetText(money(st.cost)); stockFig.values[2]:SetText(money(st.sell))
@@ -389,8 +389,8 @@ local function areaFigures(g, items)
       top = top }
   end
   return { sub = "Beruf – Material gekauft, hergestellt und verkauft", topTitle = "Größter Beitrag:",
-    labels = { "Materialkosten", "Erlös", "Gebühren", "Marge", "Hergestellt / verkauft", "Unverkauft (Material)", "Gewinn" },
-    values = { money(g.materials), money(g.revenue), money(g.fees), pct(g.profit or 0, g.revenue),
+    labels = { "Wareneinsatz", "Erlös", "Gebühren", "Marge", "Hergestellt / verkauft", "Unverkauft (Material)", "Gewinn" },
+    values = { money(g.cost), money(g.revenue), money(g.fees), pct(g.profit or 0, g.revenue),
       string.format("%d / %d Stück", g.crafted or 0, g.sold or 0),
       string.format("%d Stück · %s", g.stockUnits or 0, money(g.stockValue)), signed(g.profit) }, top = top }
 end
@@ -424,7 +424,7 @@ end
 
 local function buildLedger(page)
   local NW = ns.NativeWindow
-  local ITEM_LABELS = { "Hergestellt / gekauft", "Verkauft", "Ø Verkaufspreis", "Umsatz", "Einkauf", "Gebühren", "Gewinn" }
+  local ITEM_LABELS = { "Hergestellt / gekauft", "Verkauft", "Ø Verkaufspreis", "Umsatz", "Wareneinsatz", "Gebühren", "Gewinn" }
   local card, area, item, allItems, currentArea
   local showItem -- forward
 
@@ -494,7 +494,7 @@ local function buildLedger(page)
     item.Name:SetText(r.name or ns.ItemName(r.itemId) or ("#" .. r.itemId))
     item.Sub:SetText(shortGroup(r.prof))
     local v = { string.format("%d / %d", r.crafted or 0, r.bought or 0), tostring(r.sold or 0),
-      r.avgPrice and money(r.avgPrice) or "–", money(r.revenue), money(r.materials), money(r.fees), signed(r.profit) }
+      r.avgPrice and money(r.avgPrice) or "–", money(r.revenue), money(r.cost), money(r.fees), signed(r.profit) }
     for i, fs in ipairs(item.Figures.values) do fs:SetText(v[i] or "–") end
     item.SetEvents(eventRows(r.itemId))
   end
@@ -556,7 +556,7 @@ local function buildLedger(page)
     local title = split.footer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOPLEFT", 6, -8)
     title:SetText("Bilanz")
-    balance = NW.Figures(split.footer, title, { "Einkauf / Material", "Erlöse", "Gebühren", "Gewinn" }, { gap = 6, step = 15 })
+    balance = NW.Figures(split.footer, title, { "Wareneinsatz", "Erlöse", "Gebühren", "Gewinn" }, { gap = 6, step = 15 })
     balance.SetWidth(math.max(100, (split.footer:GetWidth() or 280) - 14))
     split.footer:HookScript("OnSizeChanged", function(f) balance.SetWidth(math.max(100, (f:GetWidth() or 280) - 14)) end)
   end
@@ -566,7 +566,7 @@ local function buildLedger(page)
     local report = P and P.Report and P.Report(since()) or { groups = {}, items = {} }
     if balance then
       local t = report.totals or {}
-      balance.values[1]:SetText(money(t.materials))
+      balance.values[1]:SetText(money(t.cost))
       balance.values[2]:SetText(money(t.revenue))
       balance.values[3]:SetText(money(t.fees))
       balance.values[4]:SetText(signed(t.profit))
