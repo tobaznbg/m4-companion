@@ -37,10 +37,10 @@ local function learnInfo(professionID, recipeID)
   return text, d[5] or d[1]
 end
 
--- The character's own profession scans: professionID -> { scan, byItem = { [craftedItemID] =
--- { recipeID (spell), recipe } } } (learned state and skill come from the game).
-local function ownScans()
-  local own, prefix = {}, ns.CharKey() .. ":"
+-- A character's profession scans (default: the own one): professionID -> { scan, byItem =
+-- { [craftedItemID] = { recipeID (spell), recipe } } } (learned state and skill come from the game).
+local function ownScans(charKey)
+  local own, prefix = {}, (charKey or ns.CharKey()) .. ":"
   for key, scan in pairs(ns.db.recipes or {}) do
     if key:sub(1, #prefix) == prefix and scan.professionID then
       local byItem = {}
@@ -54,12 +54,32 @@ local function ownScans()
   return own
 end
 
--- All recipes of one profession (Data_Recipes.lua) that make an item, priced via ns.Item.
-local function rows(filter, professionID)
+-- Whose recipe knowledge is shown for a profession: the own character's scan, else the household
+-- character with the highest skill in it (a bank character without professions sees what the
+-- crafter knows). Returns the character key and its scan, nil if nobody scanned it.
+local function knowerOf(professionID)
+  local me = ns.CharKey()
+  local keys = ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or { me }
+  local best, bestScan
+  for _, key in ipairs(keys) do
+    local scan = ownScans(key)[professionID]
+    scan = scan and scan.scan
+    if scan then
+      if key == me then return me, scan end
+      if not bestScan or (scan.rank or 0) > (bestScan.rank or 0) then best, bestScan = key, scan end
+    end
+  end
+  return best, bestScan
+end
+ns.ProfessionKnower = knowerOf
+
+-- All recipes of one profession (Data_Recipes.lua) that make an item, priced via ns.Item; learned
+-- state and skill from charKey's scan (default: the own character).
+local function rows(filter, professionID, charKey)
   local list = {}
   local data = ns.RecipeData and ns.RecipeData[professionID]
   if not data then return list end
-  local mine = ownScans()[professionID]
+  local mine = ownScans(charKey)[professionID]
   for rid, rec in pairs(data.recipes) do
     local out, quantity, reagentList = rec[2], rec[3] or 1, rec[4] or {}
     local known = mine and out and mine.byItem[out]
@@ -556,6 +576,7 @@ local LEVELS = {
 }
 local MAX_REAGENTS = 8
 local productsWindow, productsSplit, productsPID
+local refreshOverview
 
 local function signedMoney(c)
   c = math.floor((c or 0) + 0.5)
@@ -775,7 +796,7 @@ local function productEntries(pid)
       end
     end
   else
-    list = rows(key == "learned" and "learned" or "all", pid)
+    list = rows(key == "learned" and "learned" or "all", pid, (knowerOf(pid)))
   end
   local out = {}
   local function entry(e)
@@ -1283,6 +1304,11 @@ local function refreshProducts()
   local g = GATHER[productsPID]
   if g and gatherGroup(productsPID) then data = { name = g.source, icon = g.icon } end
   local title = "Alle Produkte" .. (data and (" – " .. data.name) or "")
+  -- the knowledge of another household character (the own one has no scan of this profession)
+  local knower, scan = knowerOf(productsPID)
+  if knower and knower ~= ns.CharKey() then
+    title = title .. string.format(" (Wissen: %s %d)", knower:match("^[^-]+") or knower, scan and scan.rank or 0)
+  end
   local f = productsWindow.frame
   if f.SetTitle then pcall(f.SetTitle, f, title) end
   if data and data.icon and f.SetPortraitToAsset then pcall(f.SetPortraitToAsset, f, data.icon) end
@@ -1292,12 +1318,115 @@ local function refreshProducts()
   if not data and productsSplit.empty then productsSplit.empty:SetText("Dieser Beruf stellt keine Produkte her.") end
 end
 
+-- "Berufsübersicht": every profession as a slot like Blizzard's profession book - who of the
+-- household has it (skill), and how many of its recipes pay right now (collector figures); a
+-- click shows its recipes ("Alle Produkte") in the same window.
+local OVERVIEW_ICON = "Interface\\Icons\\INV_Misc_Book_11"
+local overviewRows = {}
+
+local function professionList()
+  local craft, gather = {}, {}
+  for pid, data in pairs(ns.RecipeData or {}) do
+    craft[#craft + 1] = { pid = pid, name = data.name, icon = data.icon }
+  end
+  for pid, g in pairs(GATHER) do
+    gather[#gather + 1] = { pid = pid, name = g.source, icon = g.icon }
+  end
+  local function byName(a, b) return a.name < b.name end
+  table.sort(craft, byName)
+  table.sort(gather, byName)
+  return craft, gather
+end
+
+-- The two lines under a profession's name: who has it, and what pays.
+local function overviewLines(p)
+  local knower, scan = knowerOf(p.pid)
+  local who
+  if knower then
+    who = string.format("%s  %d/%d", knower:match("^[^-]+") or knower, scan.rank or 0, scan.max or 0)
+  else
+    who = "|cff9d9d9dvon keinem deiner Charaktere erlernt|r"
+  end
+  local s = ns.ProfessionStats and ns.ProfessionStats.professions and ns.ProfessionStats.professions[p.pid]
+  local market = ""
+  if s then
+    local best = s[2] and ns.RecipeData[p.pid] and ns.RecipeData[p.pid].recipes[s[2]]
+    market = string.format("%d Rezepte lohnen", s[1] or 0)
+    if best and (s[3] or 0) > 0 then market = market .. "  ·  bestes |cff5fd38d+" .. money(s[3]) .. "|r" end
+  elseif GATHER[p.pid] then
+    market = "Sammelberuf: Rohstoffe und Farmspots"
+  end
+  return who, market
+end
+
+local function overviewSlot(parent, p)
+  local NW = ns.NativeWindow
+  local b = CreateFrame("Button", nil, parent)
+  b:SetSize(300, 50)
+  local hl = b:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints()
+  hl:SetColorTexture(1, 0.82, 0, 0.08)
+  local slot = NW.Slot(b, p.icon, p.name, "")
+  slot:SetPoint("LEFT", 6, 0)
+  slot:EnableMouse(false)
+  b.slot = slot
+  b.market = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.market:SetPoint("TOPLEFT", slot.Sub, "BOTTOMLEFT", 0, -2)
+  b.market:SetJustifyH("LEFT")
+  b:SetScript("OnClick", function() ns.Safe(Products.Show, p.pid) end)
+  b:SetScript("OnEnter", function(btn)
+    GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+    GameTooltip:SetText(p.name)
+    GameTooltip:AddLine("Klick: alle Rezepte, was sie kosten und was sie bringen", 0.8, 0.8, 0.8)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  b.p = p
+  overviewRows[#overviewRows + 1] = b
+  return b
+end
+
+local function buildOverview(page)
+  local NW = ns.NativeWindow
+  local craft, gather = professionList()
+  local function section(title, list, anchor, y)
+    local panel = NW.Panel(page, title)
+    panel:SetPoint("TOPLEFT", anchor or page, anchor and "BOTTOMLEFT" or "TOPLEFT", 0, y)
+    panel:SetPoint("RIGHT", page, "RIGHT", 0, 0)
+    local rowsN = math.ceil(#list / 2)
+    panel:SetHeight(40 + rowsN * 52)
+    for i, p in ipairs(list) do
+      local b = overviewSlot(panel, p)
+      local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+      b:SetPoint("TOPLEFT", panel, "TOPLEFT", 12 + col * 318, -34 - row * 52)
+    end
+    return panel
+  end
+  local first = section("Herstellungsberufe", craft, nil, -4)
+  section("Sammelberufe", gather, first, -8)
+end
+
+refreshOverview = function()
+  for _, b in ipairs(overviewRows) do
+    local who, market = overviewLines(b.p)
+    b.slot.Sub:SetText(who)
+    b.market:SetText(market)
+  end
+  local f = productsWindow and productsWindow.frame
+  if f and f.SetTitle then pcall(f.SetTitle, f, "Berufsübersicht") end
+  if f and f.SetPortraitToAsset then pcall(f.SetPortraitToAsset, f, OVERVIEW_ICON) end
+end
+
 local function createProducts()
   local NW = ns.NativeWindow
   productsWindow = NW.New({ name = "M4CompanionProducts", title = "Alle Produkte", icon = "Interface\\Icons\\INV_Misc_Coin_02" })
   productsWindow.frame:HookScript("OnShow", function() Products.SyncTab() end)
   productsWindow.frame:HookScript("OnHide", function() Products.SyncTab() end)
-  productsWindow:AddTab({ key = "products", title = "Alle Produkte", hidden = true, build = function(page)
+  -- side tabs like Blizzard's profession window: the overview, then the chosen profession's recipes
+  productsWindow:AddTab({ key = "overview", title = "Berufsübersicht", icon = OVERVIEW_ICON, overview = true,
+    build = buildOverview, onShow = function() refreshOverview() end })
+  productsWindow:AddTab({ key = "products", title = "Alle Produkte", icon = "Interface\\Icons\\INV_Misc_Coin_02",
+    visible = function() return productsPID ~= nil end, build = function(page)
     productsSplit = NW.Split(page, {
       onSelect = showProduct,
       filter = { groups = {
@@ -1337,8 +1466,45 @@ Products.OpenProfessionID = openProfessionID
 function Products.Show(pid)
   if not productsWindow then createProducts() end
   productsPID = pid or openProfessionID() or productsPID
+  productsWindow:UpdateTabs()
   productsWindow:Show()
-  productsWindow:SelectTab("products")
+  if productsPID then productsWindow:SelectTab("products") else productsWindow:SelectTab("overview") end
+end
+
+-- The overview (button in the profession book): closes the window when it shows the overview.
+function Products.ShowOverview()
+  if not productsWindow then createProducts() end
+  if productsWindow.frame:IsShown() and productsWindow.current == "overview" then
+    productsWindow.frame:Hide()
+    return
+  end
+  productsWindow:Show()
+  productsWindow:SelectTab("overview")
+end
+
+-- "Berufsübersicht" in Blizzard's profession book ("Berufe", K; loads on demand): every character
+-- can open it, also one without professions.
+local bookButton
+local function attachBook()
+  local book = rawget(_G, "ProfessionsBookFrame")
+  if bookButton or type(book) ~= "table" then return end
+  local ok, b = pcall(CreateFrame, "Button", "M4CompanionBookOverview", book, "UIPanelButtonTemplate")
+  if not ok or not b then return end
+  b:SetText("Berufsübersicht")
+  b:SetSize(140, 22)
+  b:SetPoint("TOPRIGHT", book, "TOPRIGHT", -14, -26)
+  b:SetFrameLevel((book:GetFrameLevel() or 0) + 10)
+  b:SetScript("OnClick", function() ns.Safe(Products.ShowOverview) end)
+  bookButton = b
+end
+if ns.On then
+  ns.On("ADDON_LOADED", function(_, name) if name == "Blizzard_ProfessionsBook" then ns.Safe(attachBook) end end)
+  ns.On("PLAYER_LOGIN", function()
+    ns.Safe(attachBook)
+    if hooksecurefunc and rawget(_G, "ToggleProfessionsBook") then
+      hooksecurefunc("ToggleProfessionsBook", function() ns.Safe(attachBook) end)
+    end
+  end)
 end
 
 -- The tabs under the profession window look selected while their window is open.
@@ -1379,7 +1545,8 @@ end
 -- The tab: closes the window, unless it shows another profession (then it switches).
 function Products.Toggle(pid)
   pid = pid or openProfessionID()
-  if productsWindow and productsWindow.frame:IsShown() and (not pid or pid == productsPID) then
+  if productsWindow and productsWindow.frame:IsShown() and productsWindow.current == "products"
+    and (not pid or pid == productsPID) then
     productsWindow.frame:Hide()
   else
     Products.Show(pid)
