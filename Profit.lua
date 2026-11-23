@@ -167,7 +167,7 @@ end
 
 local function newFigures()
   return { revenue = 0, materials = 0, fees = 0, cut = 0, depositsLost = 0, crafted = 0, sold = 0,
-    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0, usedBy = {}, usedByN = {} }
+    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0, usedBy = {}, usedByN = {}, pre = 0, preN = 0 }
 end
 
 -- Replays the ledger: per item figures in the period and the pools at the end.
@@ -317,6 +317,10 @@ local function replay(since)
       if manual then
         -- Bought before the ledger ran, cost entered by hand: a trade at that cost.
         book(rest, TRADE, manual * rest, manual * rest)
+        if inPeriod and rest > 0 then
+          local f = figures(id, TRADE)
+          f.pre, f.preN = f.pre + manual * rest, f.preN + rest
+        end
       else
         local maker = ns.CraftedBy and ns.CraftedBy(id)
         if maker and not profOf[id] then profOf[id] = maker end
@@ -456,6 +460,7 @@ local function row(id, group, f, p, kind, left)
   local cost = ((group == OWN or kind == "expense") and round(f.materials) or round(f.soldCost)) + round(goneValue)
   return {
     gone = gone, goneValue = round(goneValue), usedBy = f.usedBy, usedByN = f.usedByN,
+    pre = round(f.pre), preN = f.preN,
     itemId = id, prof = group, kind = kind, name = ns.ItemName and ns.ItemName(id) or nil,
     used = f.used, usedValue = round(f.usedValue),
     crafted = f.crafted, sold = f.sold, bought = f.bought, spent = round(f.spent),
@@ -571,7 +576,7 @@ local function byProfit(a, b)
   return (a.name or tostring(a.itemId)) < (b.name or tostring(b.itemId))
 end
 
-local SUM_KEYS = { "gone", "goneValue", "used", "usedValue", "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
+local SUM_KEYS = { "pre", "preN", "gone", "goneValue", "used", "usedValue", "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
   "stockValue", "crafted", "sold", "bought", "spent", "soldCost", "expired", "cancelled" }
 
 Profit.SUM_KEYS = SUM_KEYS

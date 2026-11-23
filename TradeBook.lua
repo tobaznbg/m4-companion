@@ -148,7 +148,8 @@ end
 -- Real data ------------------------------------------------------------------------------------
 
 local GREEN, RED, MUTED = "|cff5fd38d", "|cffff6b6b", "|cff999999"
-local GOLD, WHITE = { 1, 0.82, 0 }, { 1, 1, 1 } -- areas in the list gold, their parts white
+-- areas in the list gold, their parts white; parts where no money moved (handed over, stock) grey
+local GOLD, WHITE, GREY = { 1, 0.82, 0 }, { 1, 1, 1 }, { 0.6, 0.6, 0.6 }
 local function money(c) return ns.FormatMoney(math.floor((c or 0) + 0.5), true) end
 local function signed(c)
   c = math.floor((c or 0) + 0.5)
@@ -405,11 +406,11 @@ end
 -- Erlös - Materialeinkauf + Bestandsveränderung - Gebühren (Bestandsveränderung = Einkauf -
 -- Wareneinsatz: what of the purchases is not sold yet, as raw material or in products).
 local function overviewFigures(g, m, e)
-  local delta = (g.spent or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0)
+  local delta = (g.spent or 0) + (g.pre or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0)
   if math.abs(delta) < 10 then delta = 0 end
   return { sub = "Beruf – Material eingekauft, verkauft", topTitle = "",
     labels = { "Erlös", "Einkauf", "Erhalten", "Von anderen Berufen verarbeitet", "Bestandsveränderung", "Gebühren", "Gewinn" },
-    values = { money(g.revenue), RED .. "-" .. money((m.spent or 0) + (e.spent or 0)) .. "|r",
+    values = { money(g.revenue), RED .. "-" .. money((m.spent or 0) + (m.pre or 0) + (e.spent or 0)) .. "|r",
       (g.tin or 0) > 0 and (RED .. "-" .. money(g.tin) .. "|r") or "–", (g.tout or 0) > 0 and signed(g.tout) or "–",
       signed(delta), money(g.fees), signed(g.profit) } }
 end
@@ -421,10 +422,12 @@ end
 local function buyFigures(g, m, trade, e)
   e = e or {}
   return { sub = trade and "Einkauf – Ware, im AH oder beim Händler gekauft" or "Einkauf – Material, Rezepte und Werkzeuge, im AH oder beim Händler gekauft", topTitle = "",
-    labels = { "Einkauf", trade and "Gekauft" or "Material", "Rezepte und Werkzeuge", "Davon verarbeitet", trade and "Wieder verkauft" or "Roh wieder verkauft", "Noch vorhanden" },
-    values = { RED .. "-" .. money((m.spent or 0) + (e.spent or 0)) .. "|r",
+    labels = { "Einkauf", trade and "Gekauft" or "Material", trade and "Einstand eingetragen (vor der Aufzeichnung)" or "Rezepte und Werkzeuge",
+      "Davon verarbeitet", trade and "Wieder verkauft" or "Roh wieder verkauft", "Noch vorhanden" },
+    values = { RED .. "-" .. money((m.spent or 0) + (m.pre or 0) + (e.spent or 0)) .. "|r",
       string.format("%d Stück · %s", m.bought or 0, money(m.spent)),
-      (e.spent or 0) > 0 and string.format("%d Stück · %s", e.bought or 0, money(e.spent)) or "–",
+      trade and ((m.pre or 0) > 0 and string.format("%d Stück · %s", m.preN or 0, money(m.pre)) or "–")
+        or ((e.spent or 0) > 0 and string.format("%d Stück · %s", e.bought or 0, money(e.spent)) or "–"),
       string.format("%d Stück · %s", m.used or 0, money(m.usedValue)),
       string.format("%d Stück", m.sold or 0), string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)) } }
 end
@@ -444,7 +447,7 @@ end
 
 -- (a few copper of rounding between the per-item values are no stock)
 local function stockValueOf(g)
-  local v = (g.spent or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0)
+  local v = (g.spent or 0) + (g.pre or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0)
   return math.abs(v) < 10 and 0 or v
 end
 
@@ -612,26 +615,33 @@ local function buildLedger(page)
     end
     local rows = {}
     for _, x in ipairs(entry.items) do
-      local r = x.r or x
-      local value = entry.isLoot and money(r.revenue) or resultText(r)
-      local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
-      local mode = entry.listMode
-      local label
-      if r.kind == "loot" and not entry.isLoot then
-        label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (Beute)|r"
+      if x.deposits then
+        -- the lost deposits of auctions that came back (no sale): one line, not per item
+        rows[#rows + 1] = { icon = "Interface\\Icons\\INV_Misc_Coin_04", "Verlorene Einstellgebühren",
+          tostring(x.n) .. "×", RED .. "-" .. money(x.v) .. "|r" }
+      else
+        local r = x.r or x
+        local value = entry.isLoot and money(r.revenue) or resultText(r)
+        local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
+        local mode = entry.listMode
+        local label
+        if r.kind == "loot" and not entry.isLoot then
+          label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (Beute)|r"
+        end
+        if mode == "buy" then
+          units, value = tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
+          if x.pre then label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (Einstand)|r" end
+        elseif mode == "out" then
+          units, value = tostring(x.n or 0), signed(x.v)
+        elseif mode == "sell" then
+          units, value = tostring(r.sold or 0), signed((r.revenue or 0) - (r.cut or 0))
+        elseif mode == "stock" then
+          units, value = tostring(r.stockUnits or 0), money(r.stockValue)
+        end
+        rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), label or r.name or ns.ItemName(r.itemId) or "?",
+          units, value, onClick = function() showItem(r, true) end,
+          ownUseMenu = r.prof == ns.Profit.TRADE or r.prof == ns.Profit.OWN }
       end
-      if mode == "buy" then
-        units, value = tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
-      elseif mode == "out" then
-        units, value = tostring(x.n or 0), signed(x.v)
-      elseif mode == "sell" then
-        units, value = tostring(r.sold or 0), signed((r.revenue or 0) - (r.fees or 0))
-      elseif mode == "stock" then
-        units, value = tostring(r.stockUnits or 0), money(r.stockValue)
-      end
-      rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), label or r.name or ns.ItemName(r.itemId) or "?",
-        units, value, onClick = function() showItem(r, true) end,
-        ownUseMenu = r.prof == ns.Profit.TRADE or r.prof == ns.Profit.OWN }
     end
     area.SetItems(rows, entry.heads)
   end
@@ -761,35 +771,41 @@ local function buildLedger(page)
           local buys, sells, stock = {}, {}, {}
           for _, r in ipairs(all) do
             if (r.kind == "material" or r.kind == "expense" or trade) and (r.bought or 0) > 0 then buys[#buys + 1] = { r = r, v = r.spent, n = r.bought } end
-            if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
+            if (r.sold or 0) > 0 then sells[#sells + 1] = r end
+            if (r.preN or 0) > 0 then buys[#buys + 1] = { r = r, v = r.pre, n = r.preN, pre = true } end
             if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
           end
           local got = {}
           for _, x in ipairs(inRows) do got[#got + 1] = { r = x.r, v = x.v, n = x.n } end
           table.sort(got, function(a, b) return a.v > b.v end)
           table.sort(buys, function(a, b) return (a.v or 0) > (b.v or 0) end)
-          table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
+          table.sort(sells, function(a, b) return (a.revenue - a.cut) > (b.revenue - b.cut) end)
+          local lostN, lost = 0, 0
+          for _, r in ipairs(all) do
+            lostN, lost = lostN + (r.expired or 0) + (r.cancelled or 0), lost + (r.depositsLost or 0)
+          end
+          if lost > 0 then sells[#sells + 1] = { deposits = true, n = lostN, v = lost } end
           table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
           if #buys > 0 then
             entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, color = WHITE, name = "Einkauf",
-              title = shortGroup(g.name) .. " – Einkauf", icon = icon, value = RED .. "-" .. money(m.spent + ex.spent) .. "|r",
+              title = shortGroup(g.name) .. " – Einkauf", icon = icon, value = RED .. "-" .. money(m.spent + m.pre + ex.spent) .. "|r",
               figures = buyFigures(g, m, trade, ex), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
           end
           if g.tin > 0 then
-            entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, color = WHITE, name = "Erhalten",
+            entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, color = GREY, name = "Erhalten",
               title = g.name .. " – Erhalten", icon = icon, value = RED .. "-" .. money(g.tin) .. "|r",
               figures = receivedFigures(g, inRows), items = got, listMode = "buy", heads = { "Item", "Stück", "Wert" } }
           end
           if g.tout > 0 then
             table.sort(outRows, function(a, b) return a.v > b.v end)
-            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, color = WHITE, name = "Verarbeitet",
+            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, color = GREY, name = "Verarbeitet",
               title = g.name .. " – Verarbeitet", icon = icon, value = signed(g.tout),
               figures = handoverFigures(g, outRows), items = outRows, listMode = "out", heads = { "Item", "Stück", "Wert" } }
           end
           entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, color = WHITE, name = "Verkauf",
             title = shortGroup(g.name) .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
             figures = sellFigures(g, m, pr, trade), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
-          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = WHITE, name = "Bestand",
+          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = GREY, name = "Bestand",
             title = shortGroup(g.name) .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
             figures = stockFigures(g, m, pr, trade), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
         else
