@@ -86,17 +86,19 @@ local function replPass(probe, after)
     probe.requested = asked
   end
 end
+-- The call itself is recorded too (called = time): if no list update follows, the server refused.
 local replFrame = CreateFrame("Frame")
 replFrame:SetScript("OnEvent", function(self)
   self:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
-  local probe = { t = time(), passes = {}, sample = {} }
-  ns.db.replicateProbe = probe
+  local probe = ns.db.replicateProbe
+  probe.t = time()
   for _, after in ipairs(REPL_PASSES) do
     C_Timer.After(after, function() ns.Safe(replPass, probe, after) end)
   end
 end)
 if C_AuctionHouse and C_AuctionHouse.ReplicateItems then
   hooksecurefunc(C_AuctionHouse, "ReplicateItems", function()
+    ns.db.replicateProbe = { called = time(), passes = {}, sample = {} }
     replFrame:RegisterEvent("REPLICATE_ITEM_LIST_UPDATE")
   end)
 end
