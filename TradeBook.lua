@@ -150,6 +150,11 @@ end
 local GREEN, RED, MUTED = "|cff5fd38d", "|cffff6b6b", "|cff999999"
 -- areas in the list gold, their parts white; parts where no money moved (handed over, stock) grey
 local GOLD, WHITE, GREY = { 1, 0.82, 0 }, { 1, 1, 1 }, { 0.6, 0.6, 0.6 }
+-- an amount in grey with its sign (bookings without money moving)
+local function greyed(c)
+  c = math.floor((c or 0) + 0.5)
+  return MUTED .. (c < 0 and "-" or "+") .. ns.FormatMoney(math.abs(c), true) .. "|r"
+end
 local function money(c) return ns.FormatMoney(math.floor((c or 0) + 0.5), true) end
 local function signed(c)
   c = math.floor((c or 0) + 0.5)
@@ -793,20 +798,20 @@ local function buildLedger(page)
           end
           if g.tin > 0 then
             entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, color = GREY, name = "Erhalten",
-              title = g.name .. " – Erhalten", icon = icon, value = RED .. "-" .. money(g.tin) .. "|r",
+              title = g.name .. " – Erhalten", icon = icon, value = greyed(-g.tin),
               figures = receivedFigures(g, inRows), items = got, listMode = "buy", heads = { "Item", "Stück", "Wert" } }
           end
           if g.tout > 0 then
             table.sort(outRows, function(a, b) return a.v > b.v end)
             entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, color = GREY, name = "Verarbeitet",
-              title = g.name .. " – Verarbeitet", icon = icon, value = signed(g.tout),
+              title = g.name .. " – Verarbeitet", icon = icon, value = greyed(g.tout),
               figures = handoverFigures(g, outRows), items = outRows, listMode = "out", heads = { "Item", "Stück", "Wert" } }
           end
           entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, color = WHITE, name = "Verkauf",
             title = shortGroup(g.name) .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
             figures = sellFigures(g, m, pr, trade), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
           entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = GREY, name = "Bestand",
-            title = shortGroup(g.name) .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
+            title = shortGroup(g.name) .. " – Bestand", icon = icon, value = greyed(stockValueOf(g)),
             figures = stockFigures(g, m, pr, trade), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
         else
           entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon, color = GOLD,
