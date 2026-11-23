@@ -570,10 +570,13 @@ local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 1, 20
 -- Returns n, grey.
 --   The demand level limits a little: "niedrig" at most two coins, "mittel" three only from twice
 --   the Kennzahl (2.0), "hoch" and up as computed.
-local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID = 1000, 1.0, 0.3, 2.0
+--   Margin under 30 %: no coins at all (not worth the risk).
+local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID, COIN_MIN_MARGIN = 1000, 1.0, 0.3, 2.0, 0.3
+ns.COIN_MIN_MARGIN = COIN_MIN_MARGIN
 function ns.Coins(profit, cost, demand)
   if not profit or profit <= 0 then return 0, false end
   local margin = (cost and cost > 0) and profit / cost or 10
+  if margin < COIN_MIN_MARGIN then return 0, false end
   local k = margin * (demand or 1)
   local n = k >= COIN_THREE and 3 or (k >= COIN_TWO and 2 or 1)
   if demand then
@@ -591,6 +594,7 @@ function ns.CraftAttractive(e)
     return false, (e.profit or 0) > 0 and "Gewinn unter 5 Silber" or "kein Gewinn"
   end
   if (e.demand or 0) < MIN_DEMAND then return false, "Nachfrage zu gering" end
+  if (e.cost or 0) > 0 and e.profit / e.cost < ns.COIN_MIN_MARGIN then return false, "Marge unter 30 %" end
   return true, nil, e.profit * math.min(e.demand, DEMAND_CAP)
 end
 
@@ -851,9 +855,11 @@ local function productEntries(pid)
       color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e,
       -- the profit per craft right in the row (the name is cut before it)
       -- "(35 %) +40g 78s": margin on the material cost, then the profit
+      -- under 30 % margin the profit is grey (no coins either: not worth it)
       value = (e.profit and e.onAH) and (((e.cost or 0) > 0 and string.format("|cff999999(%d %%)|r ",
         math.floor(e.profit / e.cost * 100 + 0.5)) or "")
-        .. (e.profit >= 0 and "|cff5fd38d+" or "|cffff6b6b-") .. money(math.floor(math.abs(e.profit) + 0.5)) .. "|r") or nil }
+        .. (e.profit < 0 and "|cffff6b6b-" or (((e.cost or 0) > 0 and e.profit / e.cost < ns.COIN_MIN_MARGIN) and "|cff999999+" or "|cff5fd38d+"))
+        .. money(math.floor(math.abs(e.profit) + 0.5)) .. "|r") or nil }
   end
   -- another player's profession window: what they know is not known here, so nothing is
   -- shown as locked
