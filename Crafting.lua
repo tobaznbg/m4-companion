@@ -1482,11 +1482,14 @@ function Products.ShowOverview()
   productsWindow:SelectTab("overview")
 end
 
--- "Berufsübersicht" in Blizzard's profession book ("Berufe", K; loads on demand): every character
--- can open it, also one without professions.
+-- "Berufsübersicht" in Blizzard's profession window ("Berufe", K; loads on demand). In this client
+-- the profession book is ProfessionsFrame itself (its overview page, side tabs per profession),
+-- which every character can open, also one without professions. ProfessionsBookFrame is taken
+-- where a client has the separate book.
 local bookButton
 local function attachBook()
   local book = rawget(_G, "ProfessionsBookFrame")
+  if type(book) ~= "table" then book = rawget(_G, "ProfessionsFrame") end
   if bookButton or type(book) ~= "table" then return end
   local ok, b = pcall(CreateFrame, "Button", "M4CompanionBookOverview", book, "UIPanelButtonTemplate")
   if not ok or not b then return end
@@ -1498,7 +1501,10 @@ local function attachBook()
   bookButton = b
 end
 if ns.On then
-  ns.On("ADDON_LOADED", function(_, name) if name == "Blizzard_ProfessionsBook" then ns.Safe(attachBook) end end)
+  ns.On("ADDON_LOADED", function(_, name)
+    if name == "Blizzard_ProfessionsBook" or name == "Blizzard_Professions" then ns.Safe(attachBook) end
+  end)
+  ns.On("TRADE_SKILL_SHOW", function() ns.Safe(attachBook) end)
   ns.On("PLAYER_LOGIN", function()
     ns.Safe(attachBook)
     if hooksecurefunc and rawget(_G, "ToggleProfessionsBook") then
