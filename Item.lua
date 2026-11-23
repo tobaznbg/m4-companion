@@ -345,15 +345,15 @@ function Item.DemandText(e)
   return "kaum"
 end
 
--- The demand level as a symbol, for the auction house list: red arrow down (niedrig, kaum),
--- the orange raid circle (mittel), green arrow up (hoch), the raid star (sehr hoch); nil without data.
--- The arrows are the vanilla tutorial arrows (they point down; the green one flipped for "up").
-local UP = "|TInterface\\Buttons\\UI-MicroStream-Green:14:14:0:0:32:32:0:32:32:0|t"
+-- The demand level as a symbol, for the auction house list (own textures, one flat style, made
+-- by tools/demand_icons.py): red arrow down (niedrig, kaum), orange bar (mittel), green arrow up
+-- (hoch), flame (sehr hoch); nil without data.
+local function icon(name) return "|TInterface\\AddOns\\m4-companion\\media\\" .. name .. ":14:14|t" end
 local DEMAND_ICONS = {
-  ["sehr hoch"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:14:14|t",
-  ["hoch"] = UP,
-  ["mittel"] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:14:14|t",
-  ["niedrig"] = "|TInterface\\Buttons\\UI-MicroStream-Red:14:14|t",
+  ["sehr hoch"] = icon("demand_top"),
+  ["hoch"] = icon("demand_high"),
+  ["mittel"] = icon("demand_mid"),
+  ["niedrig"] = icon("demand_low"),
 }
 DEMAND_ICONS["kaum"] = DEMAND_ICONS["niedrig"]
 function Item.DemandIcon(e)
