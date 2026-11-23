@@ -1546,6 +1546,7 @@ local function refreshProducts()
   LEVELS[2].label = string.format("Für mich (Stufe %d–%d)", levelRange("me"))
   pendingLevels = false
   productsSplit.SetEntries(data and productEntries(productsPID) or {})
+  Products.UpdateOwnTabs()
   if not data and productsSplit.empty then productsSplit.empty:SetText("Dieser Beruf stellt keine Produkte her.") end
 end
 
@@ -1665,6 +1666,7 @@ refreshOverview = function()
     b.coins.Set(coins, b.pin, hot)
   end
   local f = productsWindow and productsWindow.frame
+  Products.UpdateOwnTabs()
   if f and f.SetTitle then pcall(f.SetTitle, f, "Berufsübersicht") end
   if f and f.SetPortraitToAsset then pcall(f.SetPortraitToAsset, f, OVERVIEW_ICON) end
 end
@@ -1695,14 +1697,44 @@ local function createProducts()
       } },
     })
   end, onShow = function() refreshProducts() end })
-  -- "Planer" (PlanWindow.lua): the skill path of the chosen profession
-  if ns.PlanWindow and ns.PlanWindow.AddTo then ns.PlanWindow.AddTo(productsWindow) end
-  -- the tabs under Blizzard's profession window follow a switch inside this window
-  local selectTab = productsWindow.SelectTab
-  productsWindow.SelectTab = function(self, key)
-    selectTab(self, key)
-    Products.SyncTab()
+  -- under the window, like under Blizzard's profession window: "Planer" opens the planner (its
+  -- own window, PlanWindow.lua) for the chosen profession, "Einkaufsliste" the shopping list
+  local f = productsWindow.frame
+  local function tab(name, text, onClick)
+    local ok, t = pcall(CreateFrame, "Button", name, f, "PanelTabButtonTemplate")
+    if not (ok and t) then return nil end
+    t:SetText(text)
+    if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, t, 0) end
+    t:SetScript("OnClick", function() ns.Safe(onClick) end)
+    return t
   end
+  Products.ownPlanTab = tab("M4CompanionProductsPlanTab", "Planer", function()
+    if ns.PlanWindow and productsPID then ns.PlanWindow.Toggle(productsPID) end
+  end)
+  Products.ownShopTab = tab("M4CompanionProductsShopTab", "Einkaufsliste", function()
+    if ns.ShoppingList then ns.ShoppingList.Toggle() end
+  end)
+  productsWindow.frame:HookScript("OnShow", function() ns.Safe(Products.UpdateOwnTabs) end)
+end
+
+-- The tabs under this window: "Planer" only while a crafting profession is chosen (not on the
+-- overview, not for gathering), "Einkaufsliste" always, moving left without the planner.
+function Products.UpdateOwnTabs()
+  local plan, shop = Products.ownPlanTab, Products.ownShopTab
+  if not productsWindow then return end
+  local f = productsWindow.frame
+  local showPlan = plan ~= nil and productsPID ~= nil and productsWindow.current == "products"
+    and ns.PlanWindow ~= nil and ns.PlanWindow.ForProfession(productsPID)
+  if plan then
+    plan:ClearAllPoints()
+    plan:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 12, 2)
+    plan:SetShown(showPlan)
+  end
+  if shop then
+    shop:ClearAllPoints()
+    if showPlan then shop:SetPoint("LEFT", plan, "RIGHT", 4, 0) else shop:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 12, 2) end
+  end
+  Products.SyncTab()
 end
 
 -- The open profession's id (Data_Recipes keys: the skill line, e.g. 165 Lederverarbeitung).
@@ -1723,20 +1755,12 @@ Products.Entries = productEntries -- for tests
 Products.SourceLines = sourceLines
 Products.OpenProfessionID = openProfessionID
 
--- tab: "products" (default) or "plan" (the planner of PlanWindow.lua)
-function Products.Show(pid, tab)
+function Products.Show(pid)
   if not productsWindow then createProducts() end
   productsPID = pid or openProfessionID() or productsPID
-  if ns.PlanWindow and ns.PlanWindow.SetProfession then ns.PlanWindow.SetProfession(productsPID) end
   productsWindow:UpdateTabs()
   productsWindow:Show()
-  if not productsPID then
-    productsWindow:SelectTab("overview")
-  elseif tab == "plan" and productsWindow.tabs.plan and ns.PlanWindow.ForProfession(productsPID) then
-    productsWindow:SelectTab("plan")
-  else
-    productsWindow:SelectTab("products")
-  end
+  if productsPID then productsWindow:SelectTab("products") else productsWindow:SelectTab("overview") end
 end
 
 -- The overview (button in the profession book): closes the window when it shows the overview.
@@ -1788,11 +1812,13 @@ function Products.SyncTab()
     local fn = open and PanelTemplates_SelectTab or PanelTemplates_DeselectTab
     if fn then pcall(fn, tab) end
   end
-  local shown = productsWindow and productsWindow.frame:IsShown()
-  set(Products.tab, shown and productsWindow.current == "products")
+  set(Products.tab, productsWindow and productsWindow.frame:IsShown())
   local shop = ns.ShoppingList and ns.ShoppingList.Frame and ns.ShoppingList.Frame()
   set(Products.shopTab, shop and shop:IsShown())
-  set(Products.planTab, ns.PlanWindow and ns.PlanWindow.Shown and ns.PlanWindow.Shown())
+  local plan = ns.PlanWindow and ns.PlanWindow.Frame and ns.PlanWindow.Frame()
+  set(Products.planTab, plan and plan:IsShown())
+  set(Products.ownPlanTab, plan and plan:IsShown())
+  set(Products.ownShopTab, shop and shop:IsShown())
 end
 
 -- "Planer" leftmost under the profession window, only for crafting professions (PlanWindow.lua);

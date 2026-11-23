@@ -1,8 +1,6 @@
--- PlanWindow: "Planer" - the skill path of a crafting profession up to 300 in the profession
--- window's look: the third side tab of the profession window of this addon (Berufsübersicht /
--- Alle Produkte / Planer, Crafting.lua), for the profession chosen there - also one no household
--- character has (from 1, skill data). The tab "Planer" under Blizzard's profession window opens
--- it for the open profession. Not for gathering professions.
+-- PlanWindow: "Planer" - the skill path of the open crafting profession up to 300 in the
+-- profession window's look, opened by the tab "Planer" under the profession window (left of
+-- "Alle Produkte", Crafting.lua; not for gathering professions).
 --   left   "Gesamter Plan" on top, then the steps in sections by rank (Lehrling … Fachmann),
 --          the trainer visits (learn the next rank) as entries of their own
 --   right  a step: how its recipe is learned, its reagents (need / household stock / missing /
@@ -95,7 +93,7 @@ end
 local function compute(professionID)
   local out = { pid = professionID }
   -- whose skill and recipes: the own character's, else the household's best (ns.ProfessionKnower),
-  -- so a bank character plans for the crafter
+  -- so a bank character plans for the crafter; nobody's: from 1 (skill data)
   local knower = ns.ProfessionKnower and ns.ProfessionKnower(professionID)
   out.knower = knower
   local prof, why = ns.Costs.Profession(professionID, knower)
@@ -756,13 +754,14 @@ local function setFilter(field, key)
   refresh()
 end
 
--- The tab in the profession window of this addon (Crafting.lua, createProducts): as wide as the
--- shopping list there (room for the reagent names next to four columns).
-function Plan.AddTo(w)
+local function create()
   local NW = ns.NativeWindow
-  window = w
-  window:AddTab({ key = "plan", title = "Planer", icon = PLAN_ICON, width = 760,
-    visible = function() return pid ~= nil and Plan.ForProfession(pid) end, build = function(page)
+  -- as wide as the shopping list: room for the reagent names next to four columns
+  window = NW.New({ name = "M4CompanionPlanner", title = "Planer", icon = PLAN_ICON, width = 760 })
+  local function sync() if ns.Products and ns.Products.SyncTab then ns.Products.SyncTab() end end
+  window.frame:HookScript("OnShow", sync)
+  window.frame:HookScript("OnHide", sync)
+  window:AddTab({ key = "plan", title = "Planer", hidden = true, build = function(page)
     split = NW.Split(page, {
       onSelect = show,
       filter = { groups = {
@@ -778,30 +777,21 @@ function Plan.ForProfession(professionID)
   return professionID == nil or not NO_PLANNER[professionID]
 end
 
--- The profession the window shows (Products.Show sets it): the plan follows.
-function Plan.SetProfession(professionID)
-  if professionID ~= pid then dirty = true end
-  pid = professionID
-end
-
--- Whether the planner tab is the one showing.
-local function planShown()
-  return window ~= nil and window.frame:IsShown() and window.current == "plan"
-end
-Plan.Shown = planShown
-
--- Shows the planner for a profession (default: the open one); computes the plan anew.
+-- Shows the window for a profession (default: the open one); computes the plan anew.
 function Plan.Show(professionID)
+  if not window then create() end
   local open = ns.Products and ns.Products.OpenProfessionID and ns.Products.OpenProfessionID()
+  pid = professionID or open or pid
   dirty = true
-  if ns.Products and ns.Products.Show then ns.Products.Show(professionID or open or pid, "plan") end
+  window:Show()
+  window:SelectTab("plan") -- its onShow computes and lists the plan
 end
 
--- The tab under Blizzard's window: closes the planner, unless it shows another profession.
+-- The tab: closes the window, unless it shows another profession (then it switches).
 function Plan.Toggle(professionID)
   local open = ns.Products and ns.Products.OpenProfessionID and ns.Products.OpenProfessionID()
   professionID = professionID or open
-  if planShown() and (not professionID or professionID == pid) then
+  if window and window.frame:IsShown() and (not professionID or professionID == pid) then
     window.frame:Hide()
   else
     Plan.Show(professionID)
@@ -832,7 +822,7 @@ end)
 local lastRank
 if ns.Recipes and ns.Recipes.OnScanned then
   ns.Recipes.OnScanned(function(scan)
-    if not (planShown() and pid and scan.professionID == pid) then return end
+    if not (window and window.frame:IsShown() and pid and scan.professionID == pid) then return end
     if scan.rank == lastRank then return end
     lastRank = scan.rank
     dirty = true
@@ -843,7 +833,7 @@ end
 -- Bags change (bought, crafted, taken from the bank): the card's stock follows, the plan stays.
 local pending = false
 ns.On("BAG_UPDATE_DELAYED", function()
-  if pending or not (planShown() and split) then return end
+  if pending or not (window and window.frame:IsShown() and split) then return end
   pending = true
   C_Timer.After(0.5, function()
     pending = false

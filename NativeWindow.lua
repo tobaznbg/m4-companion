@@ -48,7 +48,6 @@ function NW.New(opts)
   self.frame = f
   f.m4Native = true -- ItemDetail docks at it (Alt+click from inside: NW.AltClick)
   f:SetSize(opts.width or 673, opts.height or 594) -- the profession window's size
-  self.baseWidth = opts.width or 673 -- def.width of a tab widens the window while it shows
   f:SetToplevel(true)
   f:EnableMouse(true)
   f:SetMovable(true)
@@ -164,7 +163,6 @@ function NW:SelectTab(key)
     if tab.def.build then ns.Safe(tab.def.build, tab.page, self) end
   end
   tab.page:Show()
-  self.frame:SetWidth(tab.def.width or self.baseWidth)
   self.overviewBackground:SetShown(tab.def.overview and true or false)
   self.background:SetShown(not tab.def.overview)
   self.current = key
