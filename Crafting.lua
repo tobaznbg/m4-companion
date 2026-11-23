@@ -1470,7 +1470,14 @@ local function showProduct(entry, c)
     r.Slot:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 0, i == 1 and -8 or -6)
     r.Name:SetText(string.format("%s%d/%d|r %s", have >= g.n and "|cffffffff" or "|cff999999", have, g.n,
       ns.ItemName(g.i) or ("#" .. g.i)))
-    r.Price:SetText(unit and (money(unit * g.n) .. "|cff999999  " .. (vendor and "H" or "AH") .. "|r") or "|cffff6b6bkein Preis|r")
+    -- no price: a soulbound reagent (never at the auction house) says so - it has to be farmed
+    local noPrice = "|cffff6b6bkein Preis|r"
+    if not unit then
+      local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+      local bind = info and select(14, info(g.i))
+      if bind == 1 then noPrice = "|cffffb547gebunden: selbst farmen|r" end
+    end
+    r.Price:SetText(unit and (money(unit * g.n) .. "|cff999999  " .. (vendor and "H" or "AH") .. "|r") or noPrice)
     r.Slot:Show(); r.Name:Show(); r.Price:Show()
     last = r.Slot
   end
