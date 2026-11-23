@@ -418,10 +418,9 @@ end
 -- material another profession used, at cost) + Verkauf netto (all sales after fees) + Bestand
 -- (what of it is still there, at cost: material left and products in stock) = Gewinn.
 local function buyFigures(g, m)
-  return { sub = "Einkauf – Material, gekauft oder aus einem anderen Beruf übernommen", topTitle = "",
-    labels = { "Gekauft", "Aus anderen Berufen übernommen", "Einkauf", "Davon verarbeitet", "Roh wieder verkauft", "Noch vorhanden" },
-    values = { RED .. "-" .. money(g.spent) .. "|r", (g.tin or 0) > 0 and (RED .. "-" .. money(g.tin) .. "|r") or "–",
-      RED .. "-" .. money((g.spent or 0) + (g.tin or 0)) .. "|r",
+  return { sub = "Einkauf – Material, im AH oder beim Händler gekauft", topTitle = "",
+    labels = { "Einkauf", "Gekauft", "Davon verarbeitet", "Roh wieder verkauft", "Noch vorhanden" },
+    values = { RED .. "-" .. money(g.spent) .. "|r", (m.bought or 0) .. " Stück",
       string.format("%d Stück · %s", m.used or 0, money(m.usedValue)),
       string.format("%d Stück", m.sold or 0), string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)) } }
 end
@@ -446,6 +445,21 @@ local function stockFigures(g, m, pr)
       string.format("%d Stück · %s", pr.stockUnits or 0, money(pr.stockValue)),
       string.format("%d Stück · %s", (m.gone or 0) + (pr.gone or 0), money((m.goneValue or 0) + (pr.goneValue or 0))),
       signed(stockValueOf(g)) } }
+end
+
+-- Material another profession of the household gathered and this one used (at cost).
+local function receivedFigures(g, list)
+  local labels, values, by, order = {}, {}, {}, {}
+  for _, x in ipairs(list) do
+    if not by[x.from] then by[x.from] = 0; order[#order + 1] = x.from end
+    by[x.from] = by[x.from] + x.v
+  end
+  for _, from in ipairs(order) do
+    labels[#labels + 1] = "Von " .. from; values[#values + 1] = RED .. "-" .. money(by[from]) .. "|r"
+  end
+  labels[#labels + 1] = "Erhalten"; values[#values + 1] = RED .. "-" .. money(g.tin or 0) .. "|r"
+  return { sub = "Erhalten – Material aus einem Sammelberuf, zum Einkaufspreis übernommen", topTitle = "",
+    labels = labels, values = values }
 end
 
 local function handoverFigures(g, list)
@@ -736,13 +750,22 @@ local function buildLedger(page)
             if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
             if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
           end
-          for _, x in ipairs(inRows) do buys[#buys + 1] = { r = x.r, v = x.v, n = x.n } end
+          local got = {}
+          for _, x in ipairs(inRows) do got[#got + 1] = { r = x.r, v = x.v, n = x.n } end
+          table.sort(got, function(a, b) return a.v > b.v end)
           table.sort(buys, function(a, b) return (a.v or 0) > (b.v or 0) end)
           table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
           table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
-          entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
-            title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent + g.tin) .. "|r",
-            figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+          if #buys > 0 then
+            entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
+              title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent) .. "|r",
+              figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+          end
+          if g.tin > 0 then
+            entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, name = "Erhalten",
+              title = g.name .. " – Erhalten", icon = icon, value = RED .. "-" .. money(g.tin) .. "|r",
+              figures = receivedFigures(g, inRows), items = got, listMode = "buy", heads = { "Item", "Stück", "Wert" } }
+          end
           if g.tout > 0 then
             table.sort(outRows, function(a, b) return a.v > b.v end)
             entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Verarbeitet",
