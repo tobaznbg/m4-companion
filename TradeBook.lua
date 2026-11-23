@@ -49,7 +49,7 @@ end
 
 -- Overview, built from Blizzard's "Berufe" overview parts: on top two cards side by side
 -- (profit and loss with the period choice, stock), below running auctions and recent trades.
-local CARD_W, TOP_H = 331, 130
+local CARD_W, TOP_H = 331, 142
 local TOP = -62 -- the overview's cards start under the window's choice row (character, period)
 
 local function card(page, w, x, y, width, height, title)
@@ -235,15 +235,15 @@ local function buildOverview(page, w)
   stockFig.labels[1]:SetPoint("TOPLEFT", stockSlot, "BOTTOMLEFT", 2, -8)
   stockFig.SetWidth(CARD_W - 40)
 
-  -- 3. running auctions (full width)
-  local AH = 186
+  -- 3. running auctions (full width): 9 whole rows (scroll box = card height - 74, rows of 20)
+  local AH = 254
   local auc = card(page, w, 5, TOP - TOP_H + 4, 664, AH, "Laufende Auktionen")
   local aucInfo = auc:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   aucInfo:SetPoint("TOPRIGHT", -20, -18)
   local setAuctions = scrollTable(auc, { { "Gegenstand", 20, "LEFT", 330 }, { "Preis", 450, "RIGHT" },
     { "Status", 565, "RIGHT" }, { "Zeit", 612, "RIGHT" } }, -42)
 
-  -- 4. recent trades (full width), scrollable
+  -- 4. recent trades (full width), scrollable: 3 whole rows in the rest of the window
   local trTop = TOP - TOP_H + 4 - AH + 4
   local tr = card(page, w, 5, trTop, 664, 594 + trTop - 10, "Letzte Vorgänge")
   local setTrades = scrollTable(tr, { { "Item", 20, "LEFT", 270 }, { "Wann · Art", 320, "LEFT", 170 },
