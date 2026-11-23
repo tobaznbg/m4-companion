@@ -1,5 +1,6 @@
 -- Status: how current the data is, the same line everywhere (windows, minimap tooltip).
---   cloud   time of the collector's newest snapshot in the data file (ns.AHData[113].updated)
+--   cloud   time of the collector's newest snapshot in the data file of the current
+--           auction house (AuctionHouse.CloudData().updated)
 --   scan    time of the own full scan of the current auction house (AuctionHouse.Peek().currentT)
 local ADDON, ns = ...
 
@@ -28,7 +29,7 @@ end
 
 -- Times of the cloud data and the own scan (epoch seconds or nil).
 function Status.Times()
-  local house = ns.AHData and ns.AHData[113]
+  local house = ns.AuctionHouse.CloudData()
   local scan = ns.AuctionHouse.Peek()
   return house and epoch(house.updated), scan and scan.currentT
 end

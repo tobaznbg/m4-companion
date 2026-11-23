@@ -40,7 +40,6 @@
 local ADDON, ns = ...
 
 local CUT = 0.05
-local HOUSE = 113
 
 -- Classic merchant prices of common reagents, until a merchant visit records the real one.
 local VENDOR_ESTIMATE = {
@@ -52,10 +51,9 @@ local VENDOR_ESTIMATE = {
 local Item = {}
 local observed = {}   -- itemID -> { now, t } from single item searches (this session)
 
--- The cloud data is of one auction house (AuctionHouse.CLOUD): nothing for the others.
+-- The cloud data of the current auction house (ns.AuctionHouse.CloudData), nil without.
 local function collector(itemID)
-  if not ns.AuctionHouse.HasCloud() then return nil, nil end
-  local house = ns.AHData and ns.AHData[HOUSE]
+  local house = ns.AuctionHouse.CloudData()
   return house and house.items[itemID], house
 end
 
@@ -84,8 +82,11 @@ end
 local function guildSale(itemID)
   local live = rawget(_G, "M4CompanionData")
   local gs = type(live) == "table" and live.GuildSales
-  if type(gs) ~= "table" or not ns.AuctionHouse.HasCloud() then return nil end
-  local items = type(gs.houses) == "table" and gs.houses[HOUSE] or gs.items
+  local id = ns.AuctionHouse.CloudID()
+  if type(gs) ~= "table" or not id then return nil end
+  local items
+  if type(gs.houses) == "table" then items = gs.houses[id]
+  elseif id == ns.AuctionHouse.PRIMARY_CLOUD then items = gs.items end
   local row = type(items) == "table" and items[itemID]
   if type(row) ~= "table" or type(row[1]) ~= "number" or row[1] <= 0 then return nil end
   return { median = row[1], sales = row[2] or 0, units = row[3] or 0, days = gs.days or 7 }
@@ -166,8 +167,13 @@ end
 -- The live copy from the data addon (m4-companion_Data, kept current by the companion app,
 -- global M4CompanionData) wins over the one shipped with this addon.
 -- Looked up per call: the data addon loads after this one.
-local function historyTable()
+-- Per house id: ns.HistoryAH[id] of the data addon; the collector's main house also has it as
+-- ns.History (older data addons only that one, and the copy shipped with this addon).
+local function historyTable(id)
   local live = rawget(_G, "M4CompanionData")
+  local per = type(live) == "table" and type(live.HistoryAH) == "table" and live.HistoryAH[id]
+  if type(per) == "table" then return per end
+  if id ~= ns.AuctionHouse.PRIMARY_CLOUD then return nil end
   if type(live) == "table" and type(live.History) == "table" then return live.History end
   return ns.History
 end
@@ -223,10 +229,11 @@ end
 -- The app's live copy first; an item it does not know (older or smaller file) from the copy
 -- shipped with the addon.
 function Item.History(itemID, hourly)
-  if not ns.AuctionHouse.HasCloud() then return nil end -- the history is the cloud's house's
-  local live = historyTable()
+  local id = ns.AuctionHouse.CloudID() -- the history of the current house's cloud data
+  if not id then return nil end
+  local live = historyTable(id)
   return historyFrom(live, itemID, hourly)
-    or (live ~= ns.History and historyFrom(ns.History, itemID, hourly)) or nil
+    or (id == ns.AuctionHouse.PRIMARY_CLOUD and live ~= ns.History and historyFrom(ns.History, itemID, hourly)) or nil
 end
 
 -- Items in the own full scan (itemID -> true).

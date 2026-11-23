@@ -26,7 +26,7 @@ ns.AHTable.Add({
       fmt = function(e) return ns.Item.DemandText(e) or "–" end },
   },
   rows = function(view)
-    local list, house = {}, ns.AHData and ns.AHData[113]
+    local list, house = {}, ns.AuctionHouse.CloudData()
     local want = view == "up" and 1 or -1
     for itemID in pairs(house and house.items or {}) do
       local item = ns.Item(itemID)

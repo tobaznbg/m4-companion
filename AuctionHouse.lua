@@ -26,9 +26,11 @@ AH.COLORS = { A = "|cff4a9eff", N = "|cffd8b04a", H = "|cffe04848" }
 local SCAN_LOG_MAX = 50
 -- All data of before the split (addon up to 0.17.3) was read at the Horde auction house.
 local LEGACY_HOUSE = "H"
--- The collector's cloud data (Data_AH113, the history, guild sales) is of the Horde auction
--- house: shown only for that house (AH.HasCloud).
-AH.CLOUD = "H"
+-- The collector's cloud data comes per house id: Data_AH<id>, its history, guild sales. Which
+-- ids belong to the player's houses the data addon says (m4d, ns.HouseGroups: the Allianz,
+-- Horde and neutral house of the realm's group); without it (older data addon) only the Horde
+-- house has cloud data, the collector's main house.
+AH.PRIMARY_CLOUD = 113
 -- ledger kinds that happen at the auction house (buy / sale only without src: src marks a
 -- merchant or trade window deal)
 local AH_KINDS = { buy = true, sale = true, post = true, expired = true, cancelled = true }
@@ -114,9 +116,35 @@ end
 
 function AH.IsOpen() return open ~= nil end
 
--- Whether the cloud data belongs to the house (default: the current one).
+-- The cloud house id of an auction house key (default: the current one), nil if the cloud has
+-- no data for it. Looked up per call: the data addon loads after this one.
+function AH.CloudID(house)
+  house = house or AH.Current()
+  local live = rawget(_G, "M4CompanionData")
+  local groups = type(live) == "table" and type(live.HouseGroups) == "table" and live.HouseGroups
+  if groups then
+    local key = ns.CharKey and ns.CharKey()
+    local realm = key and key:match("^[^-]*%-(.+)$")
+    local base = realm and type(live.CloudRealms) == "table" and live.CloudRealms[realm]
+    if not base and type(live.Houses) == "table" then base = live.Houses[1] end
+    local g = base and groups[base]
+    if type(g) == "table" then return g[house] end
+  end
+  return house == "H" and AH.PRIMARY_CLOUD or nil
+end
+
+-- The cloud data (ns.AHData[id]) of an auction house key (default: the current one) and its
+-- id; nil if there is none.
+function AH.CloudData(house)
+  local id = AH.CloudID(house)
+  local data = id and ns.AHData and ns.AHData[id]
+  if type(data) ~= "table" or type(data.items) ~= "table" then return nil, id end
+  return data, id
+end
+
+-- Whether the cloud has data for the house (default: the current one).
 function AH.HasCloud(house)
-  return (house or AH.Current()) == AH.CLOUD
+  return AH.CloudData(house) ~= nil
 end
 
 -- The home house: the one of the player's faction. Records of no house (crafts, merchant,

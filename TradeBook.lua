@@ -1089,8 +1089,8 @@ end
 -- Every searchable item once: { id, name, low, data = has collector or scan data }.
 local function buildIndex()
   local seen, list = {}, {}
-  -- the cloud data only for its house (AuctionHouse.CLOUD)
-  local house = ns.AuctionHouse.HasCloud() and ns.AHData and ns.AHData[113]
+  -- the cloud data of the viewed house (AuctionHouse.CloudData)
+  local house = ns.AuctionHouse.CloudData()
   local market = house and house.items or {}
   local scanned = ns.Item and ns.Item.ScannedItems and ns.Item.ScannedItems() or {}
   local scan = ns.AuctionHouse.Peek()

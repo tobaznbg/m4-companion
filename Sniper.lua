@@ -103,7 +103,7 @@ end
 -- { { itemID, score, ref, demand }... } limited to watchMax (Deals.Settings). Also used
 -- by the main window to show what the sniper watches.
 function Sniper.WatchCandidates()
-  local house = ns.AHData and ns.AHData[113]
+  local house = ns.AuctionHouse.CloudData()
   if not house then return {} end
   local set = ns.Deals.Settings()
   local money, list = GetMoney(), {}

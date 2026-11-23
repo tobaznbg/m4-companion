@@ -7,7 +7,6 @@ local ADDON, ns = ...
 local Farming = {}
 ns.Farming = Farming
 
-local HOUSE = 113
 local CUT = 0.05
 local MIN_HOURS = 48       -- collector hours before sales figures are trusted
 Farming.MIN_VALUE = 200    -- below 2 silver per unit an item is not worth farming for
@@ -101,7 +100,7 @@ function Farming.Evaluate()
 end
 
 function Farming.DataInfo()
-  local house = ns.AHData and ns.AHData[HOUSE]
+  local house = ns.AuctionHouse.CloudData()
   local scan = ns.AuctionHouse.Peek()
   return house and house.updated, house and house.hours or 0, scan and scan.currentT, MIN_HOURS
 end
