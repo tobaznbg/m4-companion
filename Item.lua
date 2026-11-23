@@ -346,7 +346,8 @@ function Item.DemandText(e)
 end
 
 -- The demand level as a symbol, for the auction house list: red arrow down (niedrig, kaum),
--- orange dash (mittel), green arrow up (hoch), flame (sehr hoch); nil without data.
+-- orange dash (mittel), green arrow up (hoch), the professions skill-up symbol (sehr hoch; a
+-- flame without it); nil without data.
 -- The arrows are the vanilla tutorial arrows (they point down; the green one flipped for "up").
 local DEMAND_ICONS = {
   ["sehr hoch"] = "|TInterface\\Icons\\Spell_Fire_Fire:14:14:0:0:64:64:5:59:5:59|t",
@@ -355,7 +356,20 @@ local DEMAND_ICONS = {
   ["niedrig"] = "|TInterface\\Buttons\\UI-MicroStream-Red:14:14|t",
 }
 DEMAND_ICONS["kaum"] = DEMAND_ICONS["niedrig"]
+-- "sehr hoch": the professions window's skill-up symbol (orange), when this client has it
+local function hasAtlas(name)
+  return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name) ~= nil
+end
+local atlasChecked = false
+local function checkAtlas()
+  if atlasChecked then return end
+  atlasChecked = true
+  if hasAtlas("Professions-Icon-Skill-High") then
+    DEMAND_ICONS["sehr hoch"] = "|A:Professions-Icon-Skill-High:14:14|a"
+  end
+end
 function Item.DemandIcon(e)
+  checkAtlas()
   local text = Item.DemandText(e)
   return text and (DEMAND_ICONS[text] or text) or nil
 end
