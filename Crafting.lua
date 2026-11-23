@@ -908,6 +908,46 @@ end
 
 -- How a recipe is learned, as lines { text, loc }: loc (name, zone, x, y) where the place is
 -- known, for the map button.
+-- Where the household has an item: bags, bank (the playing character live, the others from their
+-- stored inventory) and own running auctions. { "Lokm (Taschen, im AH)", … }, empty if nowhere.
+local function heldBy(itemID)
+  local out = {}
+  local me = ns.CharKey()
+  local keys = ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or { me }
+  local now = time()
+  for _, key in ipairs(keys) do
+    local places = {}
+    local count = (C_Item and C_Item.GetItemCount) or GetItemCount
+    if key == me and count then
+      local bags, all = count(itemID, false) or 0, count(itemID, true) or 0
+      if bags > 0 then places[#places + 1] = "Taschen" end
+      if all > bags then places[#places + 1] = "Bank" end
+    else
+      local inv = ns.db.inventory and ns.db.inventory[key]
+      for _, part in ipairs({ { "bags", "Taschen" }, { "bank", "Bank" } }) do
+        local e = inv and inv[part[1]] and inv[part[1]][itemID]
+        if e and (e.n or 0) > 0 then places[#places + 1] = part[2] end
+      end
+    end
+    local o = ns.db.owned and ns.db.owned[key]
+    for _, a in ipairs(o and o.list or {}) do
+      local running = a.s ~= 1 and not (a.tl and a.tl > 0 and (o.t or 0) + a.tl < now)
+      if a.i == itemID and running then places[#places + 1] = "im AH" break end
+    end
+    if #places > 0 then out[#out + 1] = (key:match("^[^-]+") or key) .. " (" .. table.concat(places, ", ") .. ")" end
+  end
+  return out
+end
+
+ns.HeldBy = heldBy
+
+-- The recipe item (pattern, plans, …) that teaches a recipe, from the recipe sources; nil if none.
+local function recipeItemOf(pid, spell)
+  local srcs = ns.RecipeSources and ns.RecipeSources[pid]
+  local entry = srcs and srcs.recipes and srcs.recipes[spell]
+  return entry and entry.item
+end
+
 local function sourceLines(pid, spell)
   local srcs = ns.RecipeSources and ns.RecipeSources[pid]
   local entry = srcs and srcs.recipes and srcs.recipes[spell]
@@ -1283,8 +1323,17 @@ local function showProduct(entry, c)
       or string.format("ab Skill %d", e.need)
     v.Sub:SetText((e.learned and "|cff5fd38d" or "|cffffb547") .. need .. "|r")
   else
-    v.Sub:SetText(e.learned and "gelernt"
-      or ((e.tooHigh and "|cffff6b6b" or "|cffffb547") .. "nicht gelernt" .. (e.learn and (": " .. e.learn:gsub("^Quelle %? ", "")) or "") .. "|r"))
+    -- not learned, but the household has its recipe item: say so instead of how to get it
+    local recipeItem = not e.learned and recipeItemOf(e.pid, e.spell)
+    local held = recipeItem and heldBy(recipeItem) or {}
+    if e.learned then
+      v.Sub:SetText("gelernt")
+    elseif #held > 0 then
+      v.Sub:SetText("|cff5fd38dnicht gelernt · Rezept da: " .. table.concat(held, ", ") .. "|r")
+    else
+      v.Sub:SetText((e.tooHigh and "|cffff6b6b" or "|cffffb547") .. "nicht gelernt"
+        .. (e.learn and (": " .. e.learn:gsub("^Quelle %? ", "")) or "") .. "|r")
+    end
   end
   for _, row in ipairs(v.Spots) do row.Text:Hide(); row.Sub:Hide(); row.Right:Hide(); row.Map:Hide() end
   v.SpotHead:SetShown(e.gather == true)
