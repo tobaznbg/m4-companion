@@ -404,29 +404,40 @@ end
 -- material, how much of it is still there (stock change at cost) and the profit. Gewinn =
 -- Erlös - Materialeinkauf + Bestandsveränderung - Gebühren (Bestandsveränderung = Einkauf -
 -- Wareneinsatz: what of the purchases is not sold yet, as raw material or in products).
-local function overviewFigures(g)
-  local buy = (g.spent or 0) + (g.tin or 0)
-  local delta = buy - (g.cost or 0) - (g.tout or 0)
-  local function pct(a, b) return (b and b ~= 0) and string.format("%d %%", math.floor(a / b * 100 + 0.5)) or "–" end
+local function overviewFigures(g, m, e)
+  local delta = (g.spent or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0)
+  if math.abs(delta) < 10 then delta = 0 end
   return { sub = "Beruf – Material eingekauft, verkauft", topTitle = "",
-    labels = { "Erlös", "Materialeinkauf", "Von anderen Berufen verarbeitet", "Bestandsveränderung", "Gebühren", "Marge", "Gewinn" },
-    values = { money(g.revenue), RED .. "-" .. money(buy) .. "|r", (g.tout or 0) > 0 and signed(g.tout) or "–",
-      signed(delta), money(g.fees), pct(g.profit or 0, g.revenue), signed(g.profit) } }
+    labels = { "Erlös", "Materialeinkauf", "Ausgaben (Rezepte, Werkzeuge)", "Von anderen Berufen verarbeitet", "Bestandsveränderung", "Gebühren", "Gewinn" },
+    values = { money(g.revenue), RED .. "-" .. money((m.spent or 0) + (g.tin or 0)) .. "|r",
+      (e.spent or 0) > 0 and (RED .. "-" .. money(e.spent) .. "|r") or "–", (g.tout or 0) > 0 and signed(g.tout) or "–",
+      signed(delta), money(g.fees), signed(g.profit) } }
+end
+
+local function expenseFigures(e)
+  return { sub = "Ausgaben – Rezepte und Werkzeuge des Berufs (verbraucht, kein Bestand)", topTitle = "",
+    labels = { "Gekauft", "Ausgaben" }, values = { (e.bought or 0) .. " Stück", RED .. "-" .. money(e.spent) .. "|r" } }
 end
 
 -- The parts of a profession with bought material; they add up to its profit:
 -- Einkauf (bought, and material handed over by another profession at cost) + Verarbeitet (own
 -- material another profession used, at cost) + Verkauf netto (all sales after fees) + Bestand
 -- (what of it is still there, at cost: material left and products in stock) = Gewinn.
-local function buyFigures(g, m)
-  return { sub = "Einkauf – Material, im AH oder beim Händler gekauft", topTitle = "",
-    labels = { "Einkauf", "Gekauft", "Davon verarbeitet", "Roh wieder verkauft", "Noch vorhanden" },
-    values = { RED .. "-" .. money(g.spent) .. "|r", (m.bought or 0) .. " Stück",
+local function buyFigures(g, m, trade)
+  return { sub = trade and "Einkauf – Ware, im AH oder beim Händler gekauft" or "Einkauf – Material, im AH oder beim Händler gekauft", topTitle = "",
+    labels = { "Einkauf", "Gekauft", "Davon verarbeitet", trade and "Wieder verkauft" or "Roh wieder verkauft", "Noch vorhanden" },
+    values = { RED .. "-" .. money(m.spent) .. "|r", (m.bought or 0) .. " Stück",
       string.format("%d Stück · %s", m.used or 0, money(m.usedValue)),
       string.format("%d Stück", m.sold or 0), string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)) } }
 end
 
-local function sellFigures(g, m, pr)
+local function sellFigures(g, m, pr, trade)
+  if trade then
+    return { sub = "Verkauf – nach Gebühren", topTitle = "",
+      labels = { "Erlös", "Gebühren", "Verkauft", "Verkauf netto" },
+      values = { money(g.revenue), RED .. "-" .. money(g.fees) .. "|r", string.format("%d Stück", g.sold or 0),
+        signed((g.revenue or 0) - (g.fees or 0)) } }
+  end
   return { sub = "Verkauf – Produkte und roh verkauftes Material, nach Gebühren", topTitle = "",
     labels = { "Erlös Produkte / Beute", "Erlös Material (roh)", "Gebühren", "Verkauft", "Verkauf netto" },
     values = { money(pr.revenue), money(m.revenue), RED .. "-" .. money(g.fees) .. "|r",
@@ -439,9 +450,9 @@ local function stockValueOf(g)
   return math.abs(v) < 10 and 0 or v
 end
 
-local function stockFigures(g, m, pr)
+local function stockFigures(g, m, pr, trade)
   return { sub = "Bestand – was vom Einkauf noch da ist (zum Einkaufspreis)", topTitle = "",
-    labels = { "Material übrig", "Produkte auf Lager", "Nicht mehr da (abgeschrieben)", "Bestand" },
+    labels = { trade and "Ware übrig" or "Material übrig", "Produkte auf Lager", "Nicht mehr da (abgeschrieben)", "Bestand" },
     values = { string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)),
       string.format("%d Stück · %s", pr.stockUnits or 0, money(pr.stockValue)),
       string.format("%d Stück · %s", (m.gone or 0) + (pr.gone or 0), money((m.goneValue or 0) + (pr.goneValue or 0))),
@@ -716,9 +727,12 @@ local function buildLedger(page)
         end)
         local icon = g.name == P.TRADE and AREA_ICONS.trade or (g.name == P.OWN and AREA_ICONS.own) or (isLoot and AREA_ICONS.farmed)
           or PROFESSION_ICONS[g.name] or "Interface\\Icons\\INV_Misc_QuestionMark"
-        local mats, prods = {}, {}
+        local mats, prods, exps = {}, {}, {}
+        local trade = g.name == P.TRADE
         for _, r in ipairs(items) do
-          if r.kind == "material" then mats[#mats + 1] = r else prods[#prods + 1] = r end
+          if r.kind == "material" or trade then mats[#mats + 1] = r
+          elseif r.kind == "expense" then exps[#exps + 1] = r
+          else prods[#prods + 1] = r end
         end
         -- material handed over between professions (leather from Kürschnerei to Lederverarbeitung)
         local tin, tout, inRows, outRows = 0, 0, {}, {}
@@ -737,17 +751,18 @@ local function buildLedger(page)
           end
         end
         g.tin, g.tout = math.floor(tin + 0.5), math.floor(tout + 0.5)
-        if #mats > 0 or tin > 0 then
-          -- a profession with bought material: the whole, then its parts (they add up to the profit)
-          local m, pr = P.Sum(mats, g.name), P.Sum(prods, g.name)
+        if #mats > 0 or tin > 0 or #exps > 0 then
+          -- an area with purchases: the whole, then its parts (they add up to the profit)
+          local m, pr, ex = P.Sum(mats, g.name), P.Sum(prods, g.name), P.Sum(exps, g.name)
           local all = {}
           for _, r in ipairs(prods) do all[#all + 1] = r end
           for _, r in ipairs(mats) do all[#all + 1] = r end
+          for _, r in ipairs(exps) do all[#all + 1] = r end
           entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon, color = GOLD,
-            value = signed(g.profit), figures = overviewFigures(g), items = all }
+            value = signed(g.profit), figures = trade and areaFigures(g, items) or overviewFigures(g, m, ex), items = all }
           local buys, sells, stock = {}, {}, {}
           for _, r in ipairs(all) do
-            if r.kind == "material" and (r.bought or 0) > 0 then buys[#buys + 1] = { r = r, v = r.spent, n = r.bought } end
+            if (r.kind == "material" or trade) and (r.bought or 0) > 0 then buys[#buys + 1] = { r = r, v = r.spent, n = r.bought } end
             if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
             if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
           end
@@ -759,8 +774,16 @@ local function buildLedger(page)
           table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
           if #buys > 0 then
             entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, color = WHITE, name = "Einkauf",
-              title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent) .. "|r",
-              figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+              title = shortGroup(g.name) .. " – Einkauf", icon = icon, value = RED .. "-" .. money(m.spent) .. "|r",
+              figures = buyFigures(g, m, trade), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+          end
+          if #exps > 0 then
+            local list = {}
+            for _, r in ipairs(exps) do list[#list + 1] = { r = r, v = r.spent, n = r.bought } end
+            table.sort(list, function(a, b) return (a.v or 0) > (b.v or 0) end)
+            entries[#entries + 1] = { key = g.name .. ":exp", areaEntry = true, indent = 14, color = WHITE, name = "Ausgaben",
+              title = g.name .. " – Ausgaben", icon = icon, value = RED .. "-" .. money(ex.spent) .. "|r",
+              figures = expenseFigures(ex), items = list, listMode = "buy", heads = { "Item", "Stück", "Ausgabe" } }
           end
           if g.tin > 0 then
             entries[#entries + 1] = { key = g.name .. ":in", areaEntry = true, indent = 14, color = WHITE, name = "Erhalten",
@@ -774,11 +797,11 @@ local function buildLedger(page)
               figures = handoverFigures(g, outRows), items = outRows, listMode = "out", heads = { "Item", "Stück", "Wert" } }
           end
           entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, color = WHITE, name = "Verkauf",
-            title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
-            figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
+            title = shortGroup(g.name) .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
+            figures = sellFigures(g, m, pr, trade), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
           entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, color = WHITE, name = "Bestand",
-            title = g.name .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
-            figures = stockFigures(g, m, pr), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
+            title = shortGroup(g.name) .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
+            figures = stockFigures(g, m, pr, trade), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
         else
           entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon, color = GOLD,
             value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }

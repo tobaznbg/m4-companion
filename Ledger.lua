@@ -365,6 +365,8 @@ local function toolProfession(itemID)
   end
 end
 
+Ledger.ToolProfession = toolProfession
+
 function Ledger.OnItemUse(bag, slot)
   local info = C_Container and C_Container.GetContainerItemInfo and C_Container.GetContainerItemInfo(bag, slot)
   if not (info and info.itemID) then return end

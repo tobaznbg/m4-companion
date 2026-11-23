@@ -221,6 +221,7 @@ local function replay(since)
   local lost = {}
   local traded = {}     -- itemID -> true: posted, sold, vendored, expired or cancelled once
   local tools = {}      -- itemID -> true: the tool of a craft
+  local toolProf = {}   -- itemID -> profession whose craft used it as its tool
   local usedBy = {}     -- itemID -> { [profession] = units of the bought pool used in its crafts }
   local craftProfs = {} -- profession -> true: crafted with in this household
   local usedFree = {}   -- itemID -> { [profession] = units used that came from no pool (loot) }
@@ -250,7 +251,7 @@ local function replay(since)
         f.bought, f.spent = f.bought + u, f.spent + (e.c or 0)
       end
     elseif id and e.k == "craft" and u > 0 then
-      if e.tool then tools[e.tool] = true end
+      if e.tool then tools[e.tool] = true; toolProf[e.tool] = e.prof end
       local external, internal = 0, 0
       for _, g in ipairs(e.r or {}) do
         if g.i and g.n then
@@ -337,7 +338,7 @@ local function replay(since)
       end
     end
   end
-  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, craftProfs = craftProfs }
+  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, toolProf = toolProf, craftProfs = craftProfs }
 end
 
 -- The profession a bought item is material of, from the item itself: a reagent of that
@@ -404,6 +405,25 @@ local function materialOf(id, act, own)
   end
   return best
 end
+-- The profession an own-use item serves: a recipe item (pattern, plans, …) teaches one of its
+-- recipes (ns.RecipeSources), a tool or profession item asks for it ("Benötigt Kochkunst (n)").
+local recipeItemProf
+local function expenseOf(id, own, act)
+  if not recipeItemProf then
+    recipeItemProf = {}
+    for pid, src in pairs(ns.RecipeSources or {}) do
+      local data = ns.RecipeData and ns.RecipeData[pid]
+      local name = data and data.name
+      for _, entry in pairs(name and src.recipes or {}) do
+        if type(entry) == "table" and entry.item then recipeItemProf[entry.item] = name end
+      end
+    end
+  end
+  local prof = recipeItemProf[id] or (act and act.toolProf[id])
+    or (ns.Ledger and ns.Ledger.ToolProfession and ns.Ledger.ToolProfession(id))
+  return prof and own[prof] and prof or nil
+end
+
 Profit.MaterialOf = function(id) return materialOf(id, nil) end
 Profit.OwnProfessions = ownProfessions
 
@@ -433,7 +453,7 @@ local function row(id, group, f, p, kind, left)
     goneValue = p.v * gone / p.q
     p = { q = left, v = p.v - goneValue }
   end
-  local cost = (group == OWN and round(f.materials) or round(f.soldCost)) + round(goneValue)
+  local cost = ((group == OWN or kind == "expense") and round(f.materials) or round(f.soldCost)) + round(goneValue)
   return {
     gone = gone, goneValue = round(goneValue), usedBy = f.usedBy, usedByN = f.usedByN,
     itemId = id, prof = group, kind = kind, name = ns.ItemName and ns.ItemName(id) or nil,
@@ -515,9 +535,15 @@ local function itemRows(since, replayed)
         end
         group = nil
       elseif group == TRADE and isOwnUse(id, act, held, bought[id]) then
-        -- own use: the purchase is an expense, no stock
+        -- own use: the purchase is an expense, no stock; a recipe or tool of a household
+        -- profession is that profession's expense
         f.materials = f.spent
         group, p = OWN, NONE
+        local prof = expenseOf(id, own, act)
+        if prof then
+          if (f.spent or 0) > 0 or f.sold > 0 then table.insert(rows, row(id, prof, f, NONE, "expense")) end
+          group = nil
+        end
       end
       -- Bought material that went into crafts (none left, nothing sold) is no trade; own use
       -- only in the period it was bought.
