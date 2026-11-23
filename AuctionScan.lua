@@ -389,6 +389,26 @@ local function createButton()
   end)
   t:SetScript("OnLeave", function() GameTooltip:Hide() end)
   Scan.OnDone(function() C_Timer.After(0, setTabText) end)
+  -- next to it: "Einkaufsliste" opens the shopping list (ShoppingList.lua) beside the auction house
+  local okL, list = pcall(CreateFrame, "Button", "M4CompanionShoppingTab", parent, "AuctionHouseFrameDisplayModeTabTemplate")
+  if not okL or not list then okL, list = pcall(CreateFrame, "Button", "M4CompanionShoppingTab", parent, "UIPanelButtonTemplate") end
+  if okL and list then
+    list:SetPoint("TOPLEFT", t, "TOPRIGHT", 3, 0)
+    list:SetText("Einkaufsliste")
+    if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, list, 20, nil, 70) end
+    if PanelTemplates_DeselectTab then pcall(PanelTemplates_DeselectTab, list) end
+    list:SetScript("OnClick", function()
+      if ns.ShoppingList and ns.ShoppingList.Toggle then ns.Safe(ns.ShoppingList.Toggle) end
+      if PanelTemplates_DeselectTab then pcall(PanelTemplates_DeselectTab, list) end
+    end)
+    list:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine("Einkaufsliste")
+      GameTooltip:AddLine("Was für deine geplanten Crafts noch fehlt und was es kostet.", 1, 1, 1, true)
+      GameTooltip:Show()
+    end)
+    list:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  end
 end
 
 -- Opening the auction house starts the full scan by itself (every 15 min at most).
