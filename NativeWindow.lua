@@ -329,12 +329,12 @@ function NW.Coins(parent, label)
     st.tex[i] = t
   end
   local base -- the name's own left anchor, read once
-  function st.Set(n, anchor, tint)
+  function st.Set(n, anchor, tint, indent)
     if type(label) == "table" and not base and label.GetPoint then
       local p, rel, rp, x, y = label:GetPoint(1)
       if p == "LEFT" or p == "TOPLEFT" or p == "BOTTOMLEFT" then base = { p, rel, rp, x or 0, y or 0 } end
     end
-    if base then label:SetPoint(base[1], base[2], base[3], base[4] + math.max(0, n - 1) * COIN_STEP, base[5]) end
+    if base then label:SetPoint(base[1], base[2], base[3], base[4] + math.max(0, n - 1) * COIN_STEP + (indent or 0), base[5]) end
     anchor = anchor or label
     for i, t in ipairs(st.tex) do
       t:ClearAllPoints()
@@ -494,23 +494,13 @@ function NW.Split(page, opts)
           button.m4Marker:SetShown(data.marker == "down")
           -- data.coins = 1..3 (or marker "coin" = 1): gold coins left of the name, how much it pays
           if not button.m4Coins then button.m4Coins = NW.Coins(button, label) end
-          button.m4Coins.Set(data.coins or (data.marker == "coin" and 1) or 0, nil, data.coinsGrey and "grey" or nil)
+          -- coins and data.indent (a sub-entry) move the name right, from its own anchor (read once)
+          button.m4Coins.Set(data.coins or (data.marker == "coin" and 1) or 0, nil, data.coinsGrey and "grey" or nil, data.indent)
           if type(label) == "table" and label.SetTextColor then
             -- the template's own color unless the entry brings one (buttons are recycled)
             if not button.m4LabelColor and label.GetTextColor then button.m4LabelColor = { label:GetTextColor() } end
             local c = data.color or button.m4LabelColor
             if c then label:SetTextColor(c[1], c[2], c[3]) end
-          end
-          -- data.indent: a sub-entry, its name moved right (the template's left anchor kept once)
-          if type(label) == "table" and label.GetNumPoints then
-            if not button.m4LabelLeft then
-              for i = 1, label:GetNumPoints() do
-                local point, rel, relPoint, x, y = label:GetPoint(i)
-                if point == "LEFT" then button.m4LabelLeft = { rel, relPoint, x, y } end
-              end
-            end
-            local l = button.m4LabelLeft
-            if l then label:SetPoint("LEFT", l[1], l[2], (l[3] or 0) + (data.indent or 0), l[4] or 0) end
           end
           -- the name ends before the value (cut with "…" instead of running into it)
           if type(label) == "table" then
