@@ -12,7 +12,6 @@
 --            { days, current, currentT, last = { t, items, npc }, lastScanT, scans, api,
 --              npc = id of the auctioneer of the newest scan, log = { { t, npc, offers, items }... } }
 --   npcs     { [npcID] = { name, house, fac, zone, sub, map, first, seen, visits, guess, fixed } }
---   lastHouse { [charKey] = house } the house each character used last (used while the AH is closed)
 --   lastScanT newest scan start of any house (the server's 15-minute limit is not per house)
 --   splitT   time of the split: auction house records without a house older than this are Horde
 --            (also those another PC syncs in later, see AH.Of)
@@ -63,7 +62,7 @@ local function root()
   local ah = db.ah
   ah.houses = ah.houses or {}
   ah.npcs = ah.npcs or {}
-  ah.lastHouse = ah.lastHouse or {}
+  ah.lastHouse = nil -- no longer used: away from the auctioneer it is always the home house
   return ah
 end
 
@@ -86,13 +85,12 @@ function AH.Peek(house)
   return ah and ah.houses and ah.houses[house or AH.Current()]
 end
 
--- The automatic house: the open one, else the one this character used last, else the player's
--- faction.
+-- The automatic house: the open one while the player stands at an auctioneer, else always the
+-- home house (the player's faction) - prices for crafting, planner and shopping list must not
+-- follow the house visited last.
 function AH.Auto()
   if open then return open.house end
-  local ah = ns.db and ns.db.ah
-  local last = ah and ah.lastHouse and ns.CharKey and ah.lastHouse[ns.CharKey()]
-  return last or playerHouse()
+  return playerHouse()
 end
 
 -- A view of another house (the ledger's choice), only while AH.WithView runs.
@@ -147,7 +145,8 @@ function AH.Tag(t)
   return t
 end
 
--- fn(house, previous) runs when the auction house opens and it is another house than before.
+-- fn(house, previous) runs when the automatic house changes: an auction house of another house
+-- opens, or it closes and the home house applies again.
 function AH.OnChange(fn) table.insert(listeners, fn) end
 
 -- House of an auction house mail from its sender ("… Auktionshaus der Horde", "Neutral …").
@@ -208,13 +207,20 @@ ns.On("AUCTION_HOUSE_SHOW", function()
   local previous = AH.Auto()
   local house, id, name, guess = detect()
   open = { house = house, npc = id, name = name, guess = guess }
-  root().lastHouse[ns.CharKey()] = house
   if house ~= previous then
     for _, fn in ipairs(listeners) do ns.Safe(fn, house, previous) end
   end
 end)
 
-ns.On("AUCTION_HOUSE_CLOSED", function() open = nil end)
+ns.On("AUCTION_HOUSE_CLOSED", function()
+  if not open then return end
+  local previous = open.house
+  open = nil
+  local house = AH.Auto()
+  if house ~= previous then
+    for _, fn in ipairs(listeners) do ns.Safe(fn, house, previous) end
+  end
+end)
 
 -- Data of before the split (one table for every house): it was all read at the Horde auction
 -- house, so it is moved once into houses.H (marked legacy, no auctioneer known), and the
@@ -308,7 +314,6 @@ function AH.Command(arg)
     n.house, n.fixed, n.guess = arg, true, nil
     local previous = open.house
     open.house = arg
-    root().lastHouse[ns.CharKey()] = arg
     print(P .. (n.name or "Auktionator") .. " gehört jetzt zu " .. AH.Label(arg) .. ".")
     if arg ~= previous then
       for _, fn in ipairs(listeners) do ns.Safe(fn, arg, previous) end
