@@ -1187,8 +1187,32 @@ local function productCard(c)
   return v
 end
 
+-- The card's content scrolls (mouse wheel, Blizzard's scroll bar only when it does not fit): many
+-- reagents, ways to learn and the figures are taller than the card.
+local function cardScroll(c)
+  local ok, s = pcall(CreateFrame, "ScrollFrame", nil, c, "UIPanelScrollFrameTemplate")
+  if not ok or not s then s = CreateFrame("ScrollFrame", nil, c) end
+  s.scrollBarHideable = true
+  s:SetPoint("TOPLEFT", c, "TOPLEFT", 0, -4)
+  s:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", -24, 6)
+  local content = CreateFrame("Frame", nil, s)
+  content:SetSize(math.max(1, (c:GetWidth() or 0) - 24), 1)
+  s:SetScrollChild(content)
+  s:EnableMouseWheel(true)
+  s:SetScript("OnMouseWheel", function(self, delta)
+    local range = self:GetVerticalScrollRange() or 0
+    self:SetVerticalScroll(math.max(0, math.min(range, (self:GetVerticalScroll() or 0) - delta * 40)))
+  end)
+  s:HookScript("OnSizeChanged", function(_, w) if w and w > 0 then content:SetWidth(w) end end)
+  return s, content
+end
+
 local function showProduct(entry, c)
-  if not rawget(c, "m4Product") then c.m4Product = productCard(c) end
+  if not rawget(c, "m4Product") then
+    local scroll, content = cardScroll(c)
+    c.m4Product = productCard(content)
+    c.m4Product.layer, c.m4Product.scroll = content, scroll
+  end
   local v = c.m4Product
   local e = entry and entry.e
   local shown = e ~= nil
@@ -1295,7 +1319,19 @@ local function showProduct(entry, c)
   local gewinn = v.rows[#v.rows].label
   v.Line:ClearAllPoints()
   v.Line:SetPoint("BOTTOMLEFT", gewinn, "TOPLEFT", 0, 3)
-  v.Line:SetPoint("RIGHT", c, "RIGHT", -RIGHT_EDGE + 2, 0)
+  v.Line:SetPoint("RIGHT", v.layer, "RIGHT", -RIGHT_EDGE + 2, 0)
+  -- the content as tall as what it shows (measured once laid out), from the top again
+  local scroll, layer = v.scroll, v.layer
+  local w = scroll:GetWidth()
+  if w and w > 0 then layer:SetWidth(w) end
+  scroll:SetVerticalScroll(0)
+  local function fit()
+    local top, bottom = layer:GetTop(), gewinn:GetBottom()
+    if top and bottom then layer:SetHeight(math.max(1, top - bottom + 18)) end
+    if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
+  end
+  fit()
+  if C_Timer then C_Timer.After(0, function() ns.Safe(fit) end) end
 end
 
 local function refreshProducts()
