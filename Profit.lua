@@ -223,6 +223,7 @@ local function replay(since)
   local tools = {}      -- itemID -> true: the tool of a craft
   local usedBy = {}     -- itemID -> { [profession] = units of the bought pool used in its crafts }
   local craftProfs = {} -- profession -> true: crafted with in this household
+  local usedFree = {}   -- itemID -> { [profession] = units used that came from no pool (loot) }
   local function figures(itemID, group)
     local t = items
     if group then
@@ -257,6 +258,12 @@ local function replay(since)
           internal = internal + v
           local kb, bv = take(bought[g.i], g.n - k)
           external = external + bv
+          if g.n - k - kb > 0 then
+            -- from neither pool: looted or gathered by the household itself
+            local free = usedFree[g.i] or {}
+            usedFree[g.i] = free
+            free[e.prof or UNKNOWN] = (free[e.prof or UNKNOWN] or 0) + (g.n - k - kb)
+          end
           if kb > 0 then
             local by = usedBy[g.i] or {}
             usedBy[g.i] = by
@@ -330,7 +337,7 @@ local function replay(since)
       end
     end
   end
-  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, craftProfs = craftProfs }
+  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, craftProfs = craftProfs }
 end
 
 -- The profession a bought item is material of, from the item itself: a reagent of that
@@ -370,22 +377,30 @@ local function ownProfessions(act)
   return own
 end
 
--- Only professions of the household count: a reagent of none of them stays in TRADE. What a
--- gathering profession of the household yields (leather: Kürschnerei, fish: Angeln) belongs to
--- it, also when bought; a crafting profession using it gets it handed over at cost (usedBy).
+-- Only professions of the household count: a reagent of none of them stays in TRADE (bought)
+-- or loot. What a gathering profession of the household yields (leather: Kürschnerei, fish:
+-- Angeln) belongs to it, also when bought; a crafting profession using it gets it handed over at
+-- cost (usedBy). A reagent of several professions belongs to the one with the most recipes
+-- needing it, if that is a household profession (wolf meat: Kochkunst; mageweave: Schneiderei,
+-- not Erste Hilfe with its two bandages); otherwise to a household profession that really used
+-- it in crafts.
 local function materialOf(id, act, own)
   own = own or ownProfessions(act)
   local gather = farmGroup(id)
   if gather ~= FARMED and own[gather] then return gather end
   local recipes = reagentProfessions(id)
   if not recipes then return nil end
-  local best, n = nil, 0
-  for prof, units in pairs(act and act.usedBy[id] or {}) do
-    if recipes[prof] and own[prof] and units > n then best, n = prof, units end
-  end
-  if best then return best end
+  local top, topN, tie = nil, 0, false
   for prof, count in pairs(recipes) do
-    if own[prof] and (count > n or (count == n and best and prof < best)) then best, n = prof, count end
+    if count > topN then top, topN, tie = prof, count, false
+    elseif count == topN then tie = true end
+  end
+  if top and not tie and own[top] then return top end
+  local best, n = nil, 0
+  for _, used in ipairs({ act and act.usedBy[id] or {}, act and act.usedFree[id] or {} }) do
+    for prof, units in pairs(used) do
+      if recipes[prof] and own[prof] and units > n then best, n = prof, units end
+    end
   end
   return best
 end
