@@ -1695,6 +1695,14 @@ local function createProducts()
       } },
     })
   end, onShow = function() refreshProducts() end })
+  -- "Planer" (PlanWindow.lua): the skill path of the chosen profession
+  if ns.PlanWindow and ns.PlanWindow.AddTo then ns.PlanWindow.AddTo(productsWindow) end
+  -- the tabs under Blizzard's profession window follow a switch inside this window
+  local selectTab = productsWindow.SelectTab
+  productsWindow.SelectTab = function(self, key)
+    selectTab(self, key)
+    Products.SyncTab()
+  end
 end
 
 -- The open profession's id (Data_Recipes keys: the skill line, e.g. 165 Lederverarbeitung).
@@ -1715,12 +1723,20 @@ Products.Entries = productEntries -- for tests
 Products.SourceLines = sourceLines
 Products.OpenProfessionID = openProfessionID
 
-function Products.Show(pid)
+-- tab: "products" (default) or "plan" (the planner of PlanWindow.lua)
+function Products.Show(pid, tab)
   if not productsWindow then createProducts() end
   productsPID = pid or openProfessionID() or productsPID
+  if ns.PlanWindow and ns.PlanWindow.SetProfession then ns.PlanWindow.SetProfession(productsPID) end
   productsWindow:UpdateTabs()
   productsWindow:Show()
-  if productsPID then productsWindow:SelectTab("products") else productsWindow:SelectTab("overview") end
+  if not productsPID then
+    productsWindow:SelectTab("overview")
+  elseif tab == "plan" and productsWindow.tabs.plan and ns.PlanWindow.ForProfession(productsPID) then
+    productsWindow:SelectTab("plan")
+  else
+    productsWindow:SelectTab("products")
+  end
 end
 
 -- The overview (button in the profession book): closes the window when it shows the overview.
@@ -1772,11 +1788,11 @@ function Products.SyncTab()
     local fn = open and PanelTemplates_SelectTab or PanelTemplates_DeselectTab
     if fn then pcall(fn, tab) end
   end
-  set(Products.tab, productsWindow and productsWindow.frame:IsShown())
+  local shown = productsWindow and productsWindow.frame:IsShown()
+  set(Products.tab, shown and productsWindow.current == "products")
   local shop = ns.ShoppingList and ns.ShoppingList.Frame and ns.ShoppingList.Frame()
   set(Products.shopTab, shop and shop:IsShown())
-  local plan = ns.PlanWindow and ns.PlanWindow.Frame and ns.PlanWindow.Frame()
-  set(Products.planTab, plan and plan:IsShown())
+  set(Products.planTab, ns.PlanWindow and ns.PlanWindow.Shown and ns.PlanWindow.Shown())
 end
 
 -- "Planer" leftmost under the profession window, only for crafting professions (PlanWindow.lua);

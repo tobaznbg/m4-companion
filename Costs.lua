@@ -131,8 +131,8 @@ end
 Costs.SkillData = skillData
 
 -- The character's own profession scans by profession ID.
-local function ownScans()
-  local own, prefix = {}, ns.CharKey() .. ":"
+local function ownScans(charKey)
+  local own, prefix = {}, (charKey or ns.CharKey()) .. ":"
   for key, scan in pairs(ns.db.recipes or {}) do
     if key:sub(1, #prefix) == prefix and scan.professionID then own[scan.professionID] = scan end
   end
@@ -141,9 +141,9 @@ end
 
 -- Rank and cap of a profession: the character snapshot is newer than the last time
 -- the profession window was opened.
-local function ownSkill(name, scan)
+local function ownSkill(name, scan, charKey)
   local rank, max = scan and scan.rank, scan and scan.max
-  local char = ns.db.chars and ns.db.chars[ns.CharKey()]
+  local char = ns.db.chars and ns.db.chars[charKey or ns.CharKey()]
   for _, prof in ipairs(char and char.professions or {}) do
     if name and prof.name == name then rank, max = prof.rank or rank, prof.max or max end
   end
@@ -176,10 +176,10 @@ end
 -- { pid, name, scan (own, or nil), rank, max (nil when not learned), skill, data }.
 -- Without data the second value says why: "nodata" (no skill data for the profession)
 -- or "noscan" (only the old data, which needs the own scan for reagents and products).
-function Costs.Profession(professionID)
-  local scan = ownScans()[professionID]
+function Costs.Profession(professionID, charKey)
+  local scan = ownScans(charKey)[professionID]
   local name = professionName(professionID, scan)
-  local rank, max = ownSkill(name, scan)
+  local rank, max = ownSkill(name, scan, charKey)
   local prof = { pid = professionID, name = name, scan = scan, rank = rank, max = max }
   local skill = skillData(professionID)
   if skill then
