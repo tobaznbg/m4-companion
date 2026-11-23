@@ -433,7 +433,11 @@ local function sellFigures(g, m, pr)
       string.format("%d Stück", (pr.sold or 0) + (m.sold or 0)), signed((g.revenue or 0) - (g.fees or 0)) } }
 end
 
-local function stockValueOf(g) return (g.spent or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0) end
+-- (a few copper of rounding between the per-item values are no stock)
+local function stockValueOf(g)
+  local v = (g.spent or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0)
+  return math.abs(v) < 10 and 0 or v
+end
 
 local function stockFigures(g, m, pr)
   return { sub = "Bestand – was vom Einkauf noch da ist (zum Einkaufspreis)", topTitle = "",
@@ -445,8 +449,17 @@ local function stockFigures(g, m, pr)
 end
 
 local function handoverFigures(g, list)
+  local labels, values, by, order = {}, {}, {}, {}
+  for _, x in ipairs(list) do
+    if not by[x.to] then by[x.to] = 0; order[#order + 1] = x.to end
+    by[x.to] = by[x.to] + x.v
+  end
+  for _, to in ipairs(order) do
+    labels[#labels + 1] = "An " .. to; values[#values + 1] = signed(by[to])
+  end
+  labels[#labels + 1] = "Abgegeben"; values[#values + 1] = signed(g.tout or 0)
   return { sub = "Abgegeben – eigenes Material, das ein anderer Beruf verarbeitet hat (zum Einkaufspreis)", topTitle = "",
-    labels = { "Abgegeben" }, values = { signed(g.tout or 0) } }
+    labels = labels, values = values }
 end
 
 local AREA_ICONS = { trade = "Interface\\Icons\\INV_Misc_Coin_02", farmed = "Interface\\Icons\\INV_Misc_Bag_10",
@@ -587,7 +600,7 @@ local function buildLedger(page)
         units, value = x.from and (MUTED .. "übern.|r") or tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
         if x.from then label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (aus " .. shortGroup(x.from) .. ")|r" end
       elseif mode == "out" then
-        units, value = MUTED .. shortGroup(x.to) .. "|r", signed(x.v)
+        units, value = tostring(x.n or 0), signed(x.v)
       elseif mode == "sell" then
         units, value = tostring(r.sold or 0), signed((r.revenue or 0) - (r.fees or 0))
       elseif mode == "stock" then
@@ -699,7 +712,10 @@ local function buildLedger(page)
           for prof, v in pairs(r.usedBy or {}) do
             if prof ~= r.prof and v > 0 then
               if prof == g.name then tin = tin + v; inRows[#inRows + 1] = { r = r, v = v, from = r.prof } end
-              if r.prof == g.name then tout = tout + v; outRows[#outRows + 1] = { r = r, v = v, to = prof } end
+              if r.prof == g.name then
+              tout = tout + v
+              outRows[#outRows + 1] = { r = r, v = v, to = prof, n = r.usedByN and r.usedByN[prof] or nil }
+            end
             end
           end
         end
@@ -729,7 +745,7 @@ local function buildLedger(page)
             table.sort(outRows, function(a, b) return a.v > b.v end)
             entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Abgegeben",
               title = g.name .. " – Abgegeben", icon = icon, value = signed(g.tout),
-              figures = handoverFigures(g), items = outRows, listMode = "out", heads = { "Item", "an", "Wert" } }
+              figures = handoverFigures(g, outRows), items = outRows, listMode = "out", heads = { "Item", "Stück", "Wert" } }
           end
           entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf (netto)",
             title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),

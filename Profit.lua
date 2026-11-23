@@ -167,7 +167,7 @@ end
 
 local function newFigures()
   return { revenue = 0, materials = 0, fees = 0, cut = 0, depositsLost = 0, crafted = 0, sold = 0,
-    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0, usedBy = {} }
+    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0, usedBy = {}, usedByN = {} }
 end
 
 -- Replays the ledger: per item figures in the period and the pools at the end.
@@ -265,6 +265,7 @@ local function replay(since)
               local f = figures(g.i, TRADE)
               f.used, f.usedValue = f.used + kb, f.usedValue + bv
               f.usedBy[e.prof or UNKNOWN] = (f.usedBy[e.prof or UNKNOWN] or 0) + bv
+              f.usedByN[e.prof or UNKNOWN] = (f.usedByN[e.prof or UNKNOWN] or 0) + kb
             end
           end
         end
@@ -419,7 +420,7 @@ local function row(id, group, f, p, kind, left)
   end
   local cost = (group == OWN and round(f.materials) or round(f.soldCost)) + round(goneValue)
   return {
-    gone = gone, goneValue = round(goneValue), usedBy = f.usedBy,
+    gone = gone, goneValue = round(goneValue), usedBy = f.usedBy, usedByN = f.usedByN,
     itemId = id, prof = group, kind = kind, name = ns.ItemName and ns.ItemName(id) or nil,
     used = f.used, usedValue = round(f.usedValue),
     crafted = f.crafted, sold = f.sold, bought = f.bought, spent = round(f.spent),
@@ -508,7 +509,9 @@ local function itemRows(since, replayed)
       local show = group and (group ~= TRADE or p.q > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0)
       if group == OWN and (f.spent or 0) == 0 and f.sold == 0 then show = false end
       if show then
-        table.insert(rows, row(id, group, f, p, nil, held and group == TRADE and leftBought[id] or nil))
+        -- gathered by a household profession (skinned leather): that profession's loot
+        local kind = group ~= TRADE and group ~= OWN and Profit.IsFarmed(group) and "loot" or nil
+        table.insert(rows, row(id, group, f, p, kind, held and group == TRADE and leftBought[id] or nil))
       end
     end
   end
