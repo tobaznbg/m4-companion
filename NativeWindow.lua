@@ -495,6 +495,17 @@ function NW.Split(page, opts)
             local c = data.color or button.m4LabelColor
             if c then label:SetTextColor(c[1], c[2], c[3]) end
           end
+          -- data.indent: a sub-entry, its name moved right (the template's left anchor kept once)
+          if type(label) == "table" and label.GetNumPoints then
+            if not button.m4LabelLeft then
+              for i = 1, label:GetNumPoints() do
+                local point, rel, relPoint, x, y = label:GetPoint(i)
+                if point == "LEFT" then button.m4LabelLeft = { rel, relPoint, x, y } end
+              end
+            end
+            local l = button.m4LabelLeft
+            if l then label:SetPoint("LEFT", l[1], l[2], (l[3] or 0) + (data.indent or 0), l[4] or 0) end
+          end
           -- the name ends before the value (cut with "…" instead of running into it)
           if type(label) == "table" then
             local vw = (data.value and data.value ~= "") and ((button.m4Value:GetStringWidth() or 0) + 14) or 6

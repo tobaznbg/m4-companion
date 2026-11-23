@@ -167,7 +167,7 @@ end
 
 local function newFigures()
   return { revenue = 0, materials = 0, fees = 0, cut = 0, depositsLost = 0, crafted = 0, sold = 0,
-    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0 }
+    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0 }
 end
 
 -- Replays the ledger: per item figures in the period and the pools at the end.
@@ -221,6 +221,8 @@ local function replay(since)
   local lost = {}
   local traded = {}     -- itemID -> true: posted, sold, vendored, expired or cancelled once
   local tools = {}      -- itemID -> true: the tool of a craft
+  local usedBy = {}     -- itemID -> { [profession] = units of the bought pool used in its crafts }
+  local craftProfs = {} -- profession -> true: crafted with in this household
   local function figures(itemID, group)
     local t = items
     if group then
@@ -253,13 +255,23 @@ local function replay(since)
         if g.i and g.n then
           local k, v = take(crafted[g.i], g.n)
           internal = internal + v
-          local _, bv = take(bought[g.i], g.n - k)
+          local kb, bv = take(bought[g.i], g.n - k)
           external = external + bv
+          if kb > 0 then
+            local by = usedBy[g.i] or {}
+            usedBy[g.i] = by
+            by[e.prof or UNKNOWN] = (by[e.prof or UNKNOWN] or 0) + kb
+            if inPeriod then
+              local f = figures(g.i, TRADE)
+              f.used, f.usedValue = f.used + kb, f.usedValue + bv
+            end
+          end
         end
       end
       local p = pool(crafted, id)
       p.q, p.v = p.q + u, p.v + external + internal
       profOf[id] = e.prof or profOf[id] or UNKNOWN
+      if e.prof then craftProfs[e.prof] = true end
       if inPeriod then
         local f = figures(id)
         f.crafted, f.materials = f.crafted + u, f.materials + external
@@ -316,8 +328,63 @@ local function replay(since)
       end
     end
   end
-  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought }
+  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, craftProfs = craftProfs }
 end
+
+-- The profession a bought item is material of, from the item itself: a reagent of that
+-- profession's recipes (ns.RecipeData). Used in several professions: the one whose crafts used
+-- most of it in this household, else the one with the most recipes needing it. nil: no reagent.
+local reagentIndex
+local function reagentProfessions(id)
+  if not reagentIndex then
+    reagentIndex = {}
+    for _, data in pairs(ns.RecipeData or {}) do
+      for _, rec in pairs(data.recipes or {}) do
+        local list = rec[4] or {}
+        for i = 1, #list, 2 do
+          local r = list[i]
+          if r then
+            local by = reagentIndex[r] or {}
+            reagentIndex[r] = by
+            by[data.name] = (by[data.name] or 0) + 1
+          end
+        end
+      end
+    end
+  end
+  return reagentIndex[id]
+end
+
+-- Professions of the household: scanned by one of its characters or crafted with (ledger).
+local function ownProfessions(act)
+  local own = {}
+  for prof in pairs(act and act.craftProfs or {}) do own[prof] = true end
+  local chars = {}
+  for _, key in ipairs(ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}) do chars[key] = true end
+  for key, scan in pairs(ns.db and ns.db.recipes or {}) do
+    local char = type(key) == "string" and key:match("^(.-):")
+    if type(scan) == "table" and scan.profession and (chars[char] or not next(chars)) then own[scan.profession] = true end
+  end
+  return own
+end
+
+-- Only professions of the household count: a reagent of none of them stays in TRADE.
+local function materialOf(id, act, own)
+  local recipes = reagentProfessions(id)
+  if not recipes then return nil end
+  own = own or ownProfessions(act)
+  local best, n = nil, 0
+  for prof, units in pairs(act and act.usedBy[id] or {}) do
+    if recipes[prof] and own[prof] and units > n then best, n = prof, units end
+  end
+  if best then return best end
+  for prof, count in pairs(recipes) do
+    if own[prof] and (count > n or (count == n and best and prof < best)) then best, n = prof, count end
+  end
+  return best
+end
+Profit.MaterialOf = function(id) return materialOf(id, nil) end
+Profit.OwnProfessions = ownProfessions
 
 -- Whether a bought item is own use (see OWN); pool = its bought pool (units neither sold nor
 -- used in crafts), held = heldCounts(true) or nil.
@@ -335,9 +402,10 @@ Profit.IsOwnUse = isOwnUse
 
 local function round(x) return math.floor(x + 0.5) end
 
-local function row(id, group, f, p)
+local function row(id, group, f, p, kind)
   return {
-    itemId = id, prof = group, name = ns.ItemName and ns.ItemName(id) or nil,
+    itemId = id, prof = group, kind = kind, name = ns.ItemName and ns.ItemName(id) or nil,
+    used = f.used, usedValue = round(f.usedValue),
     crafted = f.crafted, sold = f.sold, bought = f.bought, spent = round(f.spent),
     revenue = round(f.revenue), materials = round(f.materials), fees = round(f.fees),
     cut = round(f.cut), depositsLost = round(f.depositsLost),
@@ -380,6 +448,7 @@ local function itemRows(since, replayed)
   local items, crafted, profOf, other, bought, _, act = unpack(replayed or { replay(since) })
   local rows = {}
   local held = Profit.HeldCounts and Profit.HeldCounts(true) -- defined further down
+  local own = ownProfessions(act)
   local trade = other[TRADE] or {}
   for id, p in pairs(bought) do
     if p.q > 0 and not trade[id] then trade[id] = newFigures() end
@@ -389,14 +458,21 @@ local function itemRows(since, replayed)
     for id, f in pairs(list) do
       local group = area
       local p = group == TRADE and bought[id] or NONE
-      if group == TRADE and isOwnUse(id, act, held, bought[id]) then
+      local material = group == TRADE and ownMarks()[id] ~= true and materialOf(id, act, own)
+      if material then
+        -- a reagent: material of its profession (bought, used in crafts, rest sold or kept)
+        if f.bought > 0 or f.used > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0 or p.q > 0 then
+          table.insert(rows, row(id, material, f, p, "material"))
+        end
+        group = nil
+      elseif group == TRADE and isOwnUse(id, act, held, bought[id]) then
         -- own use: the purchase is an expense, no stock
         f.materials = f.spent
         group, p = OWN, NONE
       end
       -- Bought material that went into crafts (none left, nothing sold) is no trade; own use
       -- only in the period it was bought.
-      local show = group ~= TRADE or p.q > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0
+      local show = group and (group ~= TRADE or p.q > 0 or f.sold > 0 or f.expired > 0 or f.cancelled > 0)
       if group == OWN and (f.spent or 0) == 0 and f.sold == 0 then show = false end
       if show then
         table.insert(rows, row(id, group, f, p))
@@ -407,7 +483,7 @@ local function itemRows(since, replayed)
     local f = items[id] or newFigures()
     local p = crafted[id] or NONE
     if f.crafted > 0 or f.sold > 0 or f.fees > 0 or f.expired > 0 or f.cancelled > 0 or p.q > 0 then
-      table.insert(rows, row(id, prof, f, p))
+      table.insert(rows, row(id, prof, f, p, "product"))
     end
   end
   return rows
@@ -418,8 +494,20 @@ local function byProfit(a, b)
   return (a.name or tostring(a.itemId)) < (b.name or tostring(b.itemId))
 end
 
-local SUM_KEYS = { "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
+local SUM_KEYS = { "used", "usedValue", "revenue", "materials", "cost", "fees", "cut", "depositsLost", "profit", "stockUnits",
   "stockValue", "crafted", "sold", "bought", "spent", "soldCost", "expired", "cancelled" }
+
+Profit.SUM_KEYS = SUM_KEYS
+
+-- Sum of rows (same keys as a group), e.g. the materials or the products of a profession.
+function Profit.Sum(rows, name)
+  local s = { name = name }
+  for _, key in ipairs(SUM_KEYS) do s[key] = 0 end
+  for _, r in ipairs(rows or {}) do
+    for _, key in ipairs(SUM_KEYS) do s[key] = s[key] + (r[key] or 0) end
+  end
+  return s
+end
 
 local function professions(rows)
   local by, list = {}, {}

@@ -395,6 +395,29 @@ local function areaFigures(g, items)
       string.format("%d Stück · %s", g.stockUnits or 0, money(g.stockValue)), signed(g.profit) }, top = top }
 end
 
+-- A crafting profession with bought material, the whole: what came in, what went out for
+-- material, how much of it is still there (stock change at cost) and the profit. Gewinn =
+-- Erlös - Materialeinkauf + Bestandsveränderung - Gebühren (Bestandsveränderung = Einkauf -
+-- Wareneinsatz: what of the purchases is not sold yet, as raw material or in products).
+local function overviewFigures(g)
+  local delta = (g.spent or 0) - (g.cost or 0)
+  local function pct(a, b) return (b and b ~= 0) and string.format("%d %%", math.floor(a / b * 100 + 0.5)) or "–" end
+  return { sub = "Beruf – Material eingekauft, Produkte verkauft", topTitle = "",
+    labels = { "Erlös", "Materialeinkauf", "Bestandsveränderung", "Gebühren", "Marge", "Gewinn" },
+    values = { money(g.revenue), RED .. "-" .. money(g.spent) .. "|r", signed(delta), money(g.fees),
+      pct(g.profit or 0, g.revenue), signed(g.profit) } }
+end
+
+-- The bought material of a profession: bought, used in crafts, rest sold raw or still there.
+local function materialFigures(g)
+  return { sub = "Material – gekauft, verarbeitet, Rest verkauft", topTitle = "",
+    labels = { "Einkauf", "Verarbeitet", "Roh verkauft", "Gebühren", "Noch vorhanden", "Ergebnis Restverkauf" },
+    values = { RED .. "-" .. money(g.spent) .. "|r",
+      string.format("%d Stück · %s", g.used or 0, money(g.usedValue)),
+      string.format("%d Stück · %s", g.sold or 0, money(g.revenue)), money(g.fees),
+      string.format("%d Stück · %s", g.stockUnits or 0, money(g.stockValue)), signed(g.profit) } }
+end
+
 local AREA_ICONS = { trade = "Interface\\Icons\\INV_Misc_Coin_02", farmed = "Interface\\Icons\\INV_Misc_Bag_10",
   own = "Interface\\Icons\\INV_Misc_Bag_08" }
 local PROFESSION_ICONS = {
@@ -492,7 +515,7 @@ local function buildLedger(page)
     item.Icon:SetTexture(iconOf(r.itemId))
     item.itemID = r.itemId
     item.Name:SetText(r.name or ns.ItemName(r.itemId) or ("#" .. r.itemId))
-    item.Sub:SetText(shortGroup(r.prof))
+    item.Sub:SetText(shortGroup(r.prof) .. (r.kind == "material" and " · Material" or ""))
     local v = { string.format("%d / %d", r.crafted or 0, r.bought or 0), tostring(r.sold or 0),
       r.avgPrice and money(r.avgPrice) or "–", money(r.revenue), money(r.cost), money(r.fees), signed(r.profit) }
     for i, fs in ipairs(item.Figures.values) do fs:SetText(v[i] or "–") end
@@ -506,7 +529,7 @@ local function buildLedger(page)
     local f = entry.figures
     area.Icon:SetTexture(entry.icon)
     area.itemID = nil
-    area.Name:SetText(entry.name)
+    area.Name:SetText(entry.title or entry.name)
     area.Sub:SetText("Zusammenfassung")
     for i = 1, AREA_ROWS do
       local has = f.labels[i] ~= nil
@@ -522,8 +545,13 @@ local function buildLedger(page)
     local rows = {}
     for _, r in ipairs(entry.items) do
       local value = entry.isLoot and money(r.revenue) or resultText(r)
+      local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
+      if r.kind == "material" then
+        -- material: units bought, what they cost
+        units, value = MUTED .. (r.bought or 0) .. " gek.|r", RED .. "-" .. money(r.spent) .. "|r"
+      end
       rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), r.name or ns.ItemName(r.itemId) or "?",
-        (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r"), value, onClick = function() showItem(r, true) end,
+        units, value, onClick = function() showItem(r, true) end,
         ownUseMenu = r.prof == ns.Profit.TRADE or r.prof == ns.Profit.OWN }
     end
     area.SetItems(rows)
@@ -542,7 +570,7 @@ local function buildLedger(page)
       for _, r in ipairs(allItems or {}) do
         local name = (r.name or ns.ItemName(r.itemId) or ""):lower()
         if name:find(query, 1, true) then
-          out[#out + 1] = { key = "i:" .. r.prof .. ":" .. r.itemId, name = r.name or ns.ItemName(r.itemId),
+          out[#out + 1] = { key = "i:" .. r.prof .. ":" .. (r.kind or "") .. ":" .. r.itemId, name = r.name or ns.ItemName(r.itemId),
             icon = iconOf(r.itemId), value = resultText(r), row = r }
         end
       end
@@ -592,8 +620,28 @@ local function buildLedger(page)
       end)
       local icon = g.name == P.TRADE and AREA_ICONS.trade or (g.name == P.OWN and AREA_ICONS.own) or (isLoot and AREA_ICONS.farmed)
         or PROFESSION_ICONS[g.name] or "Interface\\Icons\\INV_Misc_QuestionMark"
-      entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
-        value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }
+      local mats, prods = {}, {}
+      for _, r in ipairs(items) do
+        if r.kind == "material" then mats[#mats + 1] = r else prods[#prods + 1] = r end
+      end
+      if #mats > 0 then
+        -- a crafting profession with bought material: the whole, then material and products
+        local m, pr = P.Sum(mats, g.name), P.Sum(prods, g.name)
+        local all = {}
+        for _, r in ipairs(prods) do all[#all + 1] = r end
+        for _, r in ipairs(mats) do all[#all + 1] = r end
+        entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
+          value = signed(g.profit), figures = overviewFigures(g), items = all }
+        entries[#entries + 1] = { key = g.name .. ":mat", areaEntry = true, indent = 14, name = "Material",
+          title = g.name .. " – Material", icon = icon, value = RED .. "-" .. money(m.spent) .. "|r",
+          figures = materialFigures(m), items = mats }
+        entries[#entries + 1] = { key = g.name .. ":prod", areaEntry = true, indent = 14, name = "Produkte",
+          title = g.name .. " – Produkte", icon = icon, value = GREEN .. "+" .. money(pr.revenue) .. "|r",
+          figures = areaFigures(pr, prods), items = prods }
+      else
+        entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
+          value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }
+      end
     end
     split.SetEntries(entries)
   end
