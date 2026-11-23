@@ -408,18 +408,18 @@ local function overviewFigures(g)
   local delta = buy - (g.cost or 0) - (g.tout or 0)
   local function pct(a, b) return (b and b ~= 0) and string.format("%d %%", math.floor(a / b * 100 + 0.5)) or "–" end
   return { sub = "Beruf – Material eingekauft, verkauft", topTitle = "",
-    labels = { "Erlös", "Materialeinkauf", "An andere Berufe abgegeben", "Bestandsveränderung", "Gebühren", "Marge", "Gewinn" },
+    labels = { "Erlös", "Materialeinkauf", "Von anderen Berufen verarbeitet", "Bestandsveränderung", "Gebühren", "Marge", "Gewinn" },
     values = { money(g.revenue), RED .. "-" .. money(buy) .. "|r", (g.tout or 0) > 0 and signed(g.tout) or "–",
       signed(delta), money(g.fees), pct(g.profit or 0, g.revenue), signed(g.profit) } }
 end
 
 -- The parts of a profession with bought material; they add up to its profit:
--- Einkauf (bought, and material handed over by another profession at cost) + Abgegeben (own
+-- Einkauf (bought, and material handed over by another profession at cost) + Verarbeitet (own
 -- material another profession used, at cost) + Verkauf netto (all sales after fees) + Bestand
 -- (what of it is still there, at cost: material left and products in stock) = Gewinn.
 local function buyFigures(g, m)
   return { sub = "Einkauf – Material, gekauft oder aus einem anderen Beruf übernommen", topTitle = "",
-    labels = { "Gekauft", "Aus anderen Berufen übernommen", "Einkauf", "Davon verarbeitet / abgegeben", "Roh wieder verkauft", "Noch vorhanden" },
+    labels = { "Gekauft", "Aus anderen Berufen übernommen", "Einkauf", "Davon verarbeitet", "Roh wieder verkauft", "Noch vorhanden" },
     values = { RED .. "-" .. money(g.spent) .. "|r", (g.tin or 0) > 0 and (RED .. "-" .. money(g.tin) .. "|r") or "–",
       RED .. "-" .. money((g.spent or 0) + (g.tin or 0)) .. "|r",
       string.format("%d Stück · %s", m.used or 0, money(m.usedValue)),
@@ -455,10 +455,10 @@ local function handoverFigures(g, list)
     by[x.to] = by[x.to] + x.v
   end
   for _, to in ipairs(order) do
-    labels[#labels + 1] = "An " .. to; values[#values + 1] = signed(by[to])
+    labels[#labels + 1] = "Von " .. to; values[#values + 1] = signed(by[to])
   end
-  labels[#labels + 1] = "Abgegeben"; values[#values + 1] = signed(g.tout or 0)
-  return { sub = "Abgegeben – eigenes Material, das ein anderer Beruf verarbeitet hat (zum Einkaufspreis)", topTitle = "",
+  labels[#labels + 1] = "Verarbeitet"; values[#values + 1] = signed(g.tout or 0)
+  return { sub = "Verarbeitet – eigenes Material, das ein anderer Beruf verarbeitet hat (zum Einkaufspreis)", topTitle = "",
     labels = labels, values = values }
 end
 
@@ -743,11 +743,11 @@ local function buildLedger(page)
             figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
           if g.tout > 0 then
             table.sort(outRows, function(a, b) return a.v > b.v end)
-            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Abgegeben",
-              title = g.name .. " – Abgegeben", icon = icon, value = signed(g.tout),
+            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Verarbeitet",
+              title = g.name .. " – Verarbeitet", icon = icon, value = signed(g.tout),
               figures = handoverFigures(g, outRows), items = outRows, listMode = "out", heads = { "Item", "Stück", "Wert" } }
           end
-          entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf (netto)",
+          entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf",
             title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
             figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
           entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, name = "Bestand",
