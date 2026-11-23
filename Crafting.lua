@@ -568,12 +568,19 @@ local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 1, 20
 --   Profit under 10 silver per craft: at most one coin. Demand "kaum" (Item.DEMAND_LEVELS):
 --   the coins grey. Without demand data: by the margin alone (demand counted as 1 per day).
 -- Returns n, grey.
-local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO = 1000, 1.0, 0.3
+--   The demand level limits a little: "niedrig" at most two coins, "mittel" three only from twice
+--   the Kennzahl (2.0), "hoch" and up as computed.
+local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID = 1000, 1.0, 0.3, 2.0
 function ns.Coins(profit, cost, demand)
   if not profit or profit <= 0 then return 0, false end
   local margin = (cost and cost > 0) and profit / cost or 10
   local k = margin * (demand or 1)
   local n = k >= COIN_THREE and 3 or (k >= COIN_TWO and 2 or 1)
+  if demand then
+    local level = ns.Item.DemandText({ demand = demand })
+    if level == "mittel" and k < COIN_THREE_MID then n = math.min(n, 2)
+    elseif level == "niedrig" or level == "kaum" then n = math.min(n, 2) end
+  end
   if profit < COIN_MIN_PROFIT then n = 1 end
   local grey = demand ~= nil and demand < ((ns.Item.DEMAND_LEVELS[#ns.Item.DEMAND_LEVELS] or {})[1] or 0.05)
   return n, grey
