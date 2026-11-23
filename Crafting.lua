@@ -1338,31 +1338,29 @@ local function professionList()
   return craft, gather
 end
 
--- The two lines under a profession's name: who has it, and what pays.
+-- A profession's lines: who has it (under the name), and right-aligned how many recipes pay and
+-- the best one's profit (crafting professions with collector figures only).
 local function overviewLines(p)
   local knower, scan = knowerOf(p.pid)
   local who
   if knower then
     who = string.format("%s  %d/%d", knower:match("^[^-]+") or knower, scan.rank or 0, scan.max or 0)
   else
-    who = "|cff9d9d9dvon keinem deiner Charaktere erlernt|r"
+    who = "|cff9d9d9dnicht erlernt|r"
   end
   local s = ns.ProfessionStats and ns.ProfessionStats.professions and ns.ProfessionStats.professions[p.pid]
-  local market = ""
+  local pays, best = "", ""
   if s then
-    local best = s[2] and ns.RecipeData[p.pid] and ns.RecipeData[p.pid].recipes[s[2]]
-    market = string.format("%d Rezepte lohnen", s[1] or 0)
-    if best and (s[3] or 0) > 0 then market = market .. "  ·  bestes |cff5fd38d+" .. money(s[3]) .. "|r" end
-  elseif GATHER[p.pid] then
-    market = "Sammelberuf: Rohstoffe und Farmspots"
+    pays = string.format("%d lohnen", s[1] or 0)
+    if (s[3] or 0) > 0 then best = "bestes |cff5fd38d+" .. money(s[3]) .. "|r" end
   end
-  return who, market
+  return who, pays, best
 end
 
 local function overviewSlot(parent, p)
   local NW = ns.NativeWindow
   local b = CreateFrame("Button", nil, parent)
-  b:SetSize(300, 50)
+  b:SetSize(306, 56)
   local hl = b:CreateTexture(nil, "HIGHLIGHT")
   hl:SetAllPoints()
   hl:SetColorTexture(1, 0.82, 0, 0.08)
@@ -1370,9 +1368,16 @@ local function overviewSlot(parent, p)
   slot:SetPoint("LEFT", 6, 0)
   slot:EnableMouse(false)
   b.slot = slot
-  b.market = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.market:SetPoint("TOPLEFT", slot.Sub, "BOTTOMLEFT", 0, -2)
-  b.market:SetJustifyH("LEFT")
+  slot.Name:ClearAllPoints()
+  slot.Name:SetPoint("BOTTOMLEFT", slot, "RIGHT", 8, 1)
+  slot.Sub:ClearAllPoints()
+  slot.Sub:SetPoint("TOPLEFT", slot, "RIGHT", 8, -3)
+  b.pays = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  b.pays:SetPoint("BOTTOMRIGHT", b, "RIGHT", -10, 1)
+  b.pays:SetJustifyH("RIGHT")
+  b.best = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.best:SetPoint("TOPRIGHT", b, "RIGHT", -10, -3)
+  b.best:SetJustifyH("RIGHT")
   b:SetScript("OnClick", function() ns.Safe(Products.Show, p.pid) end)
   b:SetScript("OnEnter", function(btn)
     GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
@@ -1394,11 +1399,11 @@ local function buildOverview(page)
     panel:SetPoint("TOPLEFT", anchor or page, anchor and "BOTTOMLEFT" or "TOPLEFT", 0, y)
     panel:SetPoint("RIGHT", page, "RIGHT", 0, 0)
     local rowsN = math.ceil(#list / 2)
-    panel:SetHeight(40 + rowsN * 52)
+    panel:SetHeight(44 + rowsN * 60)
     for i, p in ipairs(list) do
       local b = overviewSlot(panel, p)
       local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-      b:SetPoint("TOPLEFT", panel, "TOPLEFT", 12 + col * 318, -34 - row * 52)
+      b:SetPoint("TOPLEFT", panel, "TOPLEFT", 10 + col * 316, -36 - row * 60)
     end
     return panel
   end
@@ -1408,9 +1413,10 @@ end
 
 refreshOverview = function()
   for _, b in ipairs(overviewRows) do
-    local who, market = overviewLines(b.p)
+    local who, pays, best = overviewLines(b.p)
     b.slot.Sub:SetText(who)
-    b.market:SetText(market)
+    b.pays:SetText(pays)
+    b.best:SetText(best)
   end
   local f = productsWindow and productsWindow.frame
   if f and f.SetTitle then pcall(f.SetTitle, f, "Berufsübersicht") end
