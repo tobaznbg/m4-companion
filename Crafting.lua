@@ -570,13 +570,17 @@ local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 1, 20
 -- Returns n, grey.
 --   The demand level limits a little: "niedrig" at most two coins, "mittel" three only from twice
 --   the Kennzahl (2.0), "hoch" and up as computed.
---   Margin under 30 %: no coins at all (not worth the risk).
-local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID, COIN_MIN_MARGIN = 1000, 1.0, 0.3, 2.0, 0.3
-ns.COIN_MIN_MARGIN = COIN_MIN_MARGIN
+--   Margin under the minimum margin: no coins at all (not worth the risk).
+--   The minimum margin is the filter "Mindestmarge" of Alle Produkte (default 30 %, "aus" = 0).
+local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID = 1000, 1.0, 0.3, 2.0
+function ns.MinMargin()
+  local v = ns.db and ns.db.ui and ns.db.ui.productsMargin
+  return (tonumber(v) or 30) / 100
+end
 function ns.Coins(profit, cost, demand)
   if not profit or profit <= 0 then return 0, false end
   local margin = (cost and cost > 0) and profit / cost or 10
-  if margin < COIN_MIN_MARGIN then return 0, false end
+  if margin < ns.MinMargin() then return 0, false end
   local k = margin * (demand or 1)
   local n = k >= COIN_THREE and 3 or (k >= COIN_TWO and 2 or 1)
   if demand then
@@ -594,7 +598,9 @@ function ns.CraftAttractive(e)
     return false, (e.profit or 0) > 0 and "Gewinn unter 5 Silber" or "kein Gewinn"
   end
   if (e.demand or 0) < MIN_DEMAND then return false, "Nachfrage zu gering" end
-  if (e.cost or 0) > 0 and e.profit / e.cost < ns.COIN_MIN_MARGIN then return false, "Marge unter 30 %" end
+  if (e.cost or 0) > 0 and e.profit / e.cost < ns.MinMargin() then
+    return false, string.format("Marge unter %d %%", math.floor(ns.MinMargin() * 100 + 0.5))
+  end
   return true, nil, e.profit * math.min(e.demand, DEMAND_CAP)
 end
 
@@ -633,6 +639,16 @@ end
 local function itemIcon(id)
   local get = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
   return id and get and get(id) or nil
+end
+
+-- "Mindestmarge": recipes with a known profit below it are left out (and get no coins).
+local MARGINS = {
+  { key = "0", label = "Aus" }, { key = "10", label = "10 %" }, { key = "20", label = "20 %" },
+  { key = "30", label = "30 %" }, { key = "50", label = "50 %" }, { key = "100", label = "100 %" },
+}
+local function marginKey()
+  local ui = ns.db and ns.db.ui
+  return ui and ui.productsMargin or "30"
 end
 
 local function filterKey()
@@ -855,10 +871,10 @@ local function productEntries(pid)
       color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e,
       -- the profit per craft right in the row (the name is cut before it)
       -- "(35 %) +40g 78s": margin on the material cost, then the profit
-      -- under 30 % margin the profit is grey (no coins either: not worth it)
+      -- under the minimum margin the profit is grey (no coins either: not worth it)
       value = (e.profit and e.onAH) and (((e.cost or 0) > 0 and string.format("|cff999999(%d %%)|r ",
         math.floor(e.profit / e.cost * 100 + 0.5)) or "")
-        .. (e.profit < 0 and "|cffff6b6b-" or (((e.cost or 0) > 0 and e.profit / e.cost < ns.COIN_MIN_MARGIN) and "|cff999999+" or "|cff5fd38d+"))
+        .. (e.profit < 0 and "|cffff6b6b-" or (((e.cost or 0) > 0 and e.profit / e.cost < ns.MinMargin()) and "|cff999999+" or "|cff5fd38d+"))
         .. money(math.floor(math.abs(e.profit) + 0.5)) .. "|r") or nil }
   end
   -- another player's profession window: what they know is not known here, so nothing is
@@ -872,8 +888,10 @@ local function productEntries(pid)
   local lo, hi = levelRange(levelKey())
   for _, e in ipairs(list) do
     e.attractive, e.why, e.rank = ns.CraftAttractive(e)
+    local min = ns.MinMargin()
+    local marginOK = min <= 0 or not (e.profit and (e.cost or 0) > 0 and e.onAH) or e.profit / e.cost >= min
     if (key ~= "attractive" or e.attractive) and (key ~= "profit" or ((e.profit or 0) > 0 and e.onAH))
-      and levelOK(e, lo, hi) then
+      and levelOK(e, lo, hi) and marginOK then
       kept[#kept + 1] = e
     end
   end
@@ -1734,6 +1752,12 @@ local function createProducts()
           ns.db.ui = ns.db.ui or {}
           ns.db.ui.productsLevel = key
           refreshProducts()
+        end },
+        { title = "Mindestmarge", options = MARGINS, get = marginKey, set = function(key)
+          ns.db.ui = ns.db.ui or {}
+          ns.db.ui.productsMargin = key
+          refreshProducts()
+          ns.Safe(refreshOverview) -- the overview coins follow the margin too
         end },
       } },
     })
