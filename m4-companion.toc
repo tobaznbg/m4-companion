@@ -49,6 +49,7 @@ AHTable.lua
 Invest.lua
 Trends.lua
 Crafting.lua
+SourceLog.lua
 ShoppingList.lua
 PlanWindow.lua
 Vendor.lua
