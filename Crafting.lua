@@ -508,7 +508,7 @@ end)
 -- Blizzard's profession window (minimal additions, nothing of Blizzard's changed) ------------
 -- Recipe list: gold coins left of each recipe name that pays (making it and selling the
 -- product via the auction house brings more than the material costs): 1 to 3 by the profit
--- (ns.CoinCount). Selected recipe:
+-- (ns.Coins: margin x demand). Selected recipe:
 -- the price next to each reagent and a three line summary under the reagents. Figures from the
 -- own profession scan (ns.db.recipes) and ns.Item (BuyCost, SellNet) - no own price logic.
 
@@ -561,16 +561,22 @@ end
 -- least "mittel"; ranked by profit x demand (capped at 20) - a ranking aid, not gold per day.
 local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 1, 20
 
--- Gold coins of a recipe that pays (profession window and "Alle Produkte"): one below 2 gold
--- profit per craft, two up to 10 gold, three above; none without profit.
--- Coins deep orange: the product is also in high demand ("hoch" and up, Item.DEMAND_LEVELS).
-function ns.CoinHot(demand) return (demand or 0) >= 5 end
-
-function ns.CoinCount(profit)
-  if not profit or profit <= 0 then return 0 end
-  if profit < 20000 then return 1 end
-  if profit < 100000 then return 2 end
-  return 3
+-- Gold coins of a recipe (profession window, "Alle Produkte", Berufsübersicht), per item:
+--   Marge     = profit / material cost per craft (what one gold put in brings back)
+--   Kennzahl  = Marge x demand per day (units of the product sold per day)
+--   3 coins from 1.0, 2 from 0.3, 1 below; none without profit (or not sold via the AH).
+--   Profit under 10 silver per craft: at most one coin. Demand "kaum" (Item.DEMAND_LEVELS):
+--   the coins grey. Without demand data: by the margin alone (demand counted as 1 per day).
+-- Returns n, grey.
+local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO = 1000, 1.0, 0.3
+function ns.Coins(profit, cost, demand)
+  if not profit or profit <= 0 then return 0, false end
+  local margin = (cost and cost > 0) and profit / cost or 10
+  local k = margin * (demand or 1)
+  local n = k >= COIN_THREE and 3 or (k >= COIN_TWO and 2 or 1)
+  if profit < COIN_MIN_PROFIT then n = 1 end
+  local grey = demand ~= nil and demand < ((ns.Item.DEMAND_LEVELS[#ns.Item.DEMAND_LEVELS] or {})[1] or 0.05)
+  return n, grey
 end
 function ns.CraftAttractive(e)
   if not e.onAH then return false, "verkauft sich nur an Händler" end
@@ -831,7 +837,9 @@ local function productEntries(pid)
   local out = {}
   local function entry(e)
     return { key = tostring(e.spell or e.itemID), name = e.recipe, icon = itemIcon(e.itemID), itemID = e.itemID,
-      coins = e.onAH and ns.CoinCount(e.profit) or 0, coinsHot = ns.CoinHot(e.demand), locked = not e.learned,
+      -- demand as the item has it (nil without data, not 0)
+      coins = e.onAH and (ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)) or 0,
+      coinsGrey = e.onAH and select(2, ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)) or false, locked = not e.learned,
       -- not learned: the name greyed, like a recipe out of reach
       color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e }
   end
@@ -1571,11 +1579,7 @@ local function professionList()
 end
 
 -- A profession's line under the name (who has it) and its gold coins right in the row: those of
--- its best recipe right now (ns.CoinCount of the profit, deep orange with high demand), like
--- the recipe rows. The figures behind them are in the tooltip.
-local function professionStats(pid)
-  return ns.ProfessionStats and ns.ProfessionStats.professions and ns.ProfessionStats.professions[pid]
-end
+-- its best recipe right now (ns.Coins, grey with hardly any demand), like the recipe rows.
 
 local function overviewLines(p)
   local knower, scan = knowerOf(p.pid)
@@ -1585,8 +1589,15 @@ local function overviewLines(p)
   else
     who = "|cff9d9d9dnicht erlernt|r"
   end
-  local s = professionStats(p.pid)
-  return who, s and ns.CoinCount(s[3]) or 0, s and ns.CoinHot(s[4]) or false
+  -- the best coins of its recipes now (same rule as the recipe rows)
+  local best, grey = 0, false
+  for _, e in ipairs(rows("all", p.pid, knower) or {}) do
+    if e.onAH and e.profit then
+      local n, g = ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)
+      if n > best or (n == best and grey and not g) then best, grey = n, g end
+    end
+  end
+  return who, best, grey and "grey" or nil
 end
 
 local OVERVIEW_TOP, OVERVIEW_ROW = -50, 70 -- first card under the title bar, row height
@@ -1615,13 +1626,18 @@ local function overviewSlot(parent, p)
   b:SetScript("OnEnter", function(btn)
     GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
     GameTooltip:SetText(p.name)
-    local st = professionStats(p.pid)
-    local best = st and st[2] and ns.RecipeData[p.pid] and ns.RecipeData[p.pid].recipes[st[2]]
-    if st then
-      GameTooltip:AddLine(string.format("%d Rezepte lohnen sich gerade", st[1] or 0), 1, 1, 1)
-      if best and (st[3] or 0) > 0 then
-        GameTooltip:AddDoubleLine("Bestes: " .. best[1], "+" .. money(st[3]), 1, 1, 1, 0.37, 0.83, 0.55)
+    -- from the recipes now (same rule as the coins): how many pay, the best by coins and profit
+    local count, best, bestN = 0, nil, 0
+    for _, e in ipairs(rows("all", p.pid, (knowerOf(p.pid))) or {}) do
+      if e.onAH and (e.profit or 0) > 0 then
+        count = count + 1
+        local n = ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)
+        if n > bestN or (n == bestN and best and e.profit > best.profit) then best, bestN = e, n end
       end
+    end
+    GameTooltip:AddLine(string.format("%d Rezepte lohnen sich gerade", count), 1, 1, 1)
+    if best then
+      GameTooltip:AddDoubleLine("Bestes: " .. best.recipe, "+" .. money(best.profit), 1, 1, 1, 0.37, 0.83, 0.55)
     end
     GameTooltip:AddLine("Klick: alle Rezepte, was sie kosten und was sie bringen", 0.8, 0.8, 0.8)
     GameTooltip:Show()
@@ -1919,11 +1935,11 @@ local function updateList(list)
     n = n + 1
     local e = ns.RecipeEconomics(id)
     if not row.m4Coins then row.m4Coins = ns.NativeWindow.Coins(row, label) end
-    local coins = e and e.profit and e.onAH and ns.CoinCount(e.profit) or 0 -- only where it pays
+    local coins, grey = 0, false
+    if e and e.profit and e.onAH then coins, grey = ns.Coins(e.profit, e.cost, ns.Item(e.out).demand) end
     -- left of the skill-up arrow when it shows, else where it sits
     local ups = rawget(row, "SkillUps")
-    row.m4Coins.Set(coins, type(ups) == "table" and ups.IsShown and ups:IsShown() and ups or nil,
-      e and e.out and ns.CoinHot(ns.Item(e.out).demand))
+    row.m4Coins.Set(coins, type(ups) == "table" and ups.IsShown and ups:IsShown() and ups or nil, grey and "grey" or nil)
   end)
   profTrace("listRows", n)
 end

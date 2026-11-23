@@ -13,7 +13,7 @@
 --     left Blizzard's recipe list (search box, filter, category and recipe rows), right the recipe
 --     card (border and background of the profession window's form)
 --     entry fields: value (right in the row), marker ("down": red arrow, "coin": one gold coin),
---     coins (1..3 gold coins left of the name), coinsHot (them deep orange), color ({ r, g, b } of the name), locked (Blizzard's lock icon), itemID
+--     coins (1..3 gold coins left of the name), coinsGrey (them grey: hardly any demand), color ({ r, g, b } of the name), locked (Blizzard's lock icon), itemID
 --     (tooltip, Alt+click market data);
 --     opts.filter = { options = { { key, label }… }, get(), set(key) }: Blizzard's filter button
 --       (several radio groups: opts.filter = { groups = { { title, options, get, set }… } })
@@ -314,10 +314,10 @@ function NW.AltClick(itemID, region)
 end
 
 -- 1 to 3 gold coins left of a row's name, slightly overlapping (the profession window's coin,
--- more of them the more a recipe pays: ns.CoinCount). The name moves right by the extra coins,
+-- more of them the more a recipe pays: ns.Coins). The name moves right by the extra coins,
 -- so the stack stays inside the row. Set(n, anchor, hot): the coins sit left of anchor (default
--- the name, e.g. the skill-up arrow when it shows); hot tints them deep orange (high demand on
--- top); n = 0 hides them and puts the name back.
+-- the name, e.g. the skill-up arrow when it shows); tint "grey" greys them (hardly any demand);
+-- n = 0 hides them and puts the name back.
 local COIN, COIN_STEP = "Interface\\MoneyFrame\\UI-GoldIcon", 7
 function NW.Coins(parent, label)
   local st = { tex = {} }
@@ -329,7 +329,7 @@ function NW.Coins(parent, label)
     st.tex[i] = t
   end
   local base -- the name's own left anchor, read once
-  function st.Set(n, anchor, hot)
+  function st.Set(n, anchor, tint)
     if type(label) == "table" and not base and label.GetPoint then
       local p, rel, rp, x, y = label:GetPoint(1)
       if p == "LEFT" or p == "TOPLEFT" or p == "BOTTOMLEFT" then base = { p, rel, rp, x or 0, y or 0 } end
@@ -339,7 +339,13 @@ function NW.Coins(parent, label)
     for i, t in ipairs(st.tex) do
       t:ClearAllPoints()
       if type(anchor) == "table" then t:SetPoint("RIGHT", anchor, "LEFT", -4 - (i - 1) * COIN_STEP, 0) end
-      if hot then t:SetVertexColor(1, 0.45, 0.05) else t:SetVertexColor(1, 1, 1) end
+      if tint == "grey" then
+        t:SetVertexColor(0.5, 0.5, 0.5)
+        if t.SetDesaturated then t:SetDesaturated(true) end
+      else
+        t:SetVertexColor(1, 1, 1)
+        if t.SetDesaturated then t:SetDesaturated(false) end
+      end
       t:SetShown(i <= n and type(anchor) == "table")
     end
   end
@@ -488,7 +494,7 @@ function NW.Split(page, opts)
           button.m4Marker:SetShown(data.marker == "down")
           -- data.coins = 1..3 (or marker "coin" = 1): gold coins left of the name, how much it pays
           if not button.m4Coins then button.m4Coins = NW.Coins(button, label) end
-          button.m4Coins.Set(data.coins or (data.marker == "coin" and 1) or 0, nil, data.coinsHot)
+          button.m4Coins.Set(data.coins or (data.marker == "coin" and 1) or 0, nil, data.coinsGrey and "grey" or nil)
           if type(label) == "table" and label.SetTextColor then
             -- the template's own color unless the entry brings one (buttons are recycled)
             if not button.m4LabelColor and label.GetTextColor then button.m4LabelColor = { label:GetTextColor() } end
