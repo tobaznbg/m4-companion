@@ -481,6 +481,8 @@ local function itemRows(since, replayed)
   for area, list in pairs(other) do
     for id, f in pairs(list) do
       local group = area
+      -- gathered by a profession nobody in the household has (looted ore, herbs): loot
+      if area ~= FARMED and area ~= TRADE and area ~= OWN and Profit.IsFarmed(area) and not own[area] then group = FARMED end
       local p = group == TRADE and bought[id] or NONE
       local material = group == TRADE and ownMarks()[id] ~= true and materialOf(id, act, own)
       if material then

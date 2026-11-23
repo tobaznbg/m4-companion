@@ -639,82 +639,105 @@ local function buildLedger(page)
       balance.values[3]:SetText(money(t.fees))
       balance.values[4]:SetText(signed(t.profit))
     end
+    -- three main categories: the game (loot, trade, own use), main and secondary professions;
+    -- within a profession category the gathering ones first
+    local SECONDARY = { ["Angeln"] = true, ["Kochkunst"] = true, ["Erste Hilfe"] = true }
+    local byName = {}
+    for _, g in ipairs(report.groups) do byName[g.name] = g end
     local ordered = {}
-    for _, g in ipairs(report.groups) do if g.name == P.TRADE then ordered[#ordered + 1] = g end end
-    for _, g in ipairs(report.groups) do if g.name == P.FARMED then ordered[#ordered + 1] = g end end
-    -- gathering professions next to the loot, then the crafting professions
-    for _, g in ipairs(report.groups) do if g.name ~= P.FARMED and P.IsFarmed(g.name) then ordered[#ordered + 1] = g end end
-    for _, g in ipairs(report.groups) do
-      if g.name ~= P.TRADE and g.name ~= P.OWN and not P.IsFarmed(g.name) then ordered[#ordered + 1] = g end
+    local function add(g) if g then ordered[#ordered + 1] = g end end
+    local function profs(secondary)
+      local list = {}
+      for _, g in ipairs(report.groups) do
+        if g.name ~= P.TRADE and g.name ~= P.OWN and g.name ~= P.FARMED and (SECONDARY[g.name] or false) == secondary then
+          list[#list + 1] = g
+        end
+      end
+      table.sort(list, function(a, b)
+        local fa, fb = P.IsFarmed(a.name), P.IsFarmed(b.name)
+        if fa ~= fb then return fa end
+        return a.name < b.name
+      end)
+      return list
     end
-    for _, g in ipairs(report.groups) do if g.name == P.OWN then ordered[#ordered + 1] = g end end
-    local entries = { { key = "areas", header = "Bereiche" } }
+    ordered[#ordered + 1] = { header = "Spiel", key = "cat:game" }
+    add(byName[P.FARMED]); add(byName[P.TRADE]); add(byName[P.OWN])
+    local main, side = profs(false), profs(true)
+    if #main > 0 then ordered[#ordered + 1] = { header = "Hauptberufe", key = "cat:main" } end
+    for _, g in ipairs(main) do add(g) end
+    if #side > 0 then ordered[#ordered + 1] = { header = "Nebenberufe", key = "cat:side" } end
+    for _, g in ipairs(side) do add(g) end
+    local entries = {}
     allItems = {}
     local allMaterial = {}
     for _, list in pairs(report.items) do
       for _, r in ipairs(list) do if r.kind == "material" then allMaterial[#allMaterial + 1] = r end end
     end
     for _, g in ipairs(ordered) do
-      local items = {}
-      for _, r in ipairs(report.items[g.name] or {}) do items[#items + 1] = r; allItems[#allItems + 1] = r end
-      local isLoot = P.IsFarmed(g.name)
-      table.sort(items, function(a, b)
-        if isLoot then return (a.revenue or 0) > (b.revenue or 0) end
-        return (a.profit or 0) > (b.profit or 0)
-      end)
-      local icon = g.name == P.TRADE and AREA_ICONS.trade or (g.name == P.OWN and AREA_ICONS.own) or (isLoot and AREA_ICONS.farmed)
-        or PROFESSION_ICONS[g.name] or "Interface\\Icons\\INV_Misc_QuestionMark"
-      local mats, prods = {}, {}
-      for _, r in ipairs(items) do
-        if r.kind == "material" then mats[#mats + 1] = r else prods[#prods + 1] = r end
-      end
-      -- material handed over between professions (leather from Kürschnerei to Lederverarbeitung)
-      local tin, tout, inRows, outRows = 0, 0, {}, {}
-      for _, r in ipairs(allMaterial) do
-        for prof, v in pairs(r.usedBy or {}) do
-          if prof ~= r.prof and v > 0 then
-            if prof == g.name then tin = tin + v; inRows[#inRows + 1] = { r = r, v = v, from = r.prof } end
-            if r.prof == g.name then tout = tout + v; outRows[#outRows + 1] = { r = r, v = v, to = prof } end
+      if g.header then
+        entries[#entries + 1] = { key = g.key, header = g.header }
+      else
+        local items = {}
+        for _, r in ipairs(report.items[g.name] or {}) do items[#items + 1] = r; allItems[#allItems + 1] = r end
+        local isLoot = P.IsFarmed(g.name)
+        table.sort(items, function(a, b)
+          if isLoot then return (a.revenue or 0) > (b.revenue or 0) end
+          return (a.profit or 0) > (b.profit or 0)
+        end)
+        local icon = g.name == P.TRADE and AREA_ICONS.trade or (g.name == P.OWN and AREA_ICONS.own) or (isLoot and AREA_ICONS.farmed)
+          or PROFESSION_ICONS[g.name] or "Interface\\Icons\\INV_Misc_QuestionMark"
+        local mats, prods = {}, {}
+        for _, r in ipairs(items) do
+          if r.kind == "material" then mats[#mats + 1] = r else prods[#prods + 1] = r end
+        end
+        -- material handed over between professions (leather from Kürschnerei to Lederverarbeitung)
+        local tin, tout, inRows, outRows = 0, 0, {}, {}
+        for _, r in ipairs(allMaterial) do
+          for prof, v in pairs(r.usedBy or {}) do
+            if prof ~= r.prof and v > 0 then
+              if prof == g.name then tin = tin + v; inRows[#inRows + 1] = { r = r, v = v, from = r.prof } end
+              if r.prof == g.name then tout = tout + v; outRows[#outRows + 1] = { r = r, v = v, to = prof } end
+            end
           end
         end
-      end
-      g.tin, g.tout = math.floor(tin + 0.5), math.floor(tout + 0.5)
-      if #mats > 0 or tin > 0 then
-        -- a profession with bought material: the whole, then its parts (they add up to the profit)
-        local m, pr = P.Sum(mats, g.name), P.Sum(prods, g.name)
-        local all = {}
-        for _, r in ipairs(prods) do all[#all + 1] = r end
-        for _, r in ipairs(mats) do all[#all + 1] = r end
-        entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
-          value = signed(g.profit), figures = overviewFigures(g), items = all }
-        local buys, sells, stock = {}, {}, {}
-        for _, r in ipairs(all) do
-          if r.kind == "material" and (r.bought or 0) > 0 then buys[#buys + 1] = { r = r, v = r.spent, n = r.bought } end
-          if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
-          if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
+        g.tin, g.tout = math.floor(tin + 0.5), math.floor(tout + 0.5)
+        if #mats > 0 or tin > 0 then
+          -- a profession with bought material: the whole, then its parts (they add up to the profit)
+          local m, pr = P.Sum(mats, g.name), P.Sum(prods, g.name)
+          local all = {}
+          for _, r in ipairs(prods) do all[#all + 1] = r end
+          for _, r in ipairs(mats) do all[#all + 1] = r end
+          entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
+            value = signed(g.profit), figures = overviewFigures(g), items = all }
+          local buys, sells, stock = {}, {}, {}
+          for _, r in ipairs(all) do
+            if r.kind == "material" and (r.bought or 0) > 0 then buys[#buys + 1] = { r = r, v = r.spent, n = r.bought } end
+            if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
+            if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
+          end
+          for _, x in ipairs(inRows) do buys[#buys + 1] = { r = x.r, v = x.v, from = x.from } end
+          table.sort(buys, function(a, b) return (a.v or 0) > (b.v or 0) end)
+          table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
+          table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
+          entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
+            title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent + g.tin) .. "|r",
+            figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+          if g.tout > 0 then
+            table.sort(outRows, function(a, b) return a.v > b.v end)
+            entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Abgegeben",
+              title = g.name .. " – Abgegeben", icon = icon, value = signed(g.tout),
+              figures = handoverFigures(g), items = outRows, listMode = "out", heads = { "Item", "an", "Wert" } }
+          end
+          entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf (netto)",
+            title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
+            figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
+          entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, name = "Bestand",
+            title = g.name .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
+            figures = stockFigures(g, m, pr), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
+        else
+          entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
+            value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }
         end
-        for _, x in ipairs(inRows) do buys[#buys + 1] = { r = x.r, v = x.v, from = x.from } end
-        table.sort(buys, function(a, b) return (a.v or 0) > (b.v or 0) end)
-        table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
-        table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
-        entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
-          title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent + g.tin) .. "|r",
-          figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
-        if g.tout > 0 then
-          table.sort(outRows, function(a, b) return a.v > b.v end)
-          entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Abgegeben",
-            title = g.name .. " – Abgegeben", icon = icon, value = signed(g.tout),
-            figures = handoverFigures(g), items = outRows, listMode = "out", heads = { "Item", "an", "Wert" } }
-        end
-        entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf (netto)",
-          title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
-          figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
-        entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, name = "Bestand",
-          title = g.name .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
-          figures = stockFigures(g, m, pr), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
-      else
-        entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
-          value = signed(g.profit), figures = areaFigures(g, items), items = items, isLoot = isLoot }
       end
     end
     split.SetEntries(entries)
