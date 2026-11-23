@@ -59,11 +59,10 @@ local KINDS = { buy = "Kauf", post = "Eingestellt", sale = "Verkauf", vendor = "
 -- Auction durations of the post hooks (1/2/3) in seconds.
 local DURATIONS = { [1] = 12 * 3600, [2] = 24 * 3600, [3] = 48 * 3600 }
 
+-- the lines the tooltip still has (Tooltip.lua): price, guild sales, crafting profit, hint
 local TOOLTIP_LINES = {
-  { "price", "Preis" }, { "range", "Marktwerte" }, { "guildSales", "Gilde verkauft (echte Verkäufe)" }, { "trend", "Trend" },
-  { "demand", "Nachfrage" }, { "crafting", "Crafting" }, { "recipe", "Rezept lehrt (bei Rezept-Items)" },
-  { "advice", "Empfehlung" }, { "vendor", "Händlerpreis" },
-  { "hint", "Hinweis „Alt+Klick: Details“" },
+  { "price", "Preis" }, { "guildSales", "Gilde verkauft (echte Verkäufe)" }, { "crafting", "Crafting (Gewinn)" },
+  { "recipe", "Crafting bei Rezept-Items (Gewinn des Produkts)" }, { "hint", "Hinweis „Alt+Klick: Details“" },
 }
 
 local frame, statusText

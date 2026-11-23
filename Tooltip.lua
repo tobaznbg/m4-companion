@@ -99,66 +99,22 @@ local function addLines(tooltip, itemID)
   else
     tooltip:AddLine(C .. "nicht im AH", 0.7, 0.7, 0.7)
   end
-  -- The three medians of the hourly cheapest offers (German calendar days, ns.Item).
-  local medians = on("range") and ns.Item.MedianText(item, true)
-  if medians then
-    tooltip:AddDoubleLine(C .. "Marktwert", (medians:gsub("^Marktwert ", "")), 0.7, 0.7, 0.7, 1, 1, 1)
-  end
   -- What guild members really sold it for (their ledgers, without names; ns.Item).
   local sold = on("guildSales") and ns.Item.GuildSaleText(item, true)
   if sold then
     tooltip:AddDoubleLine(C .. "Gilde verkauft", sold, 0.7, 0.7, 0.7, 1, 1, 1)
   end
-  -- trend (colored) and demand in one line
-  local trend = on("trend") and ns.Item.TrendText(item)
-  local demand = on("demand") and ns.Item.DemandText(item)
-  if trend or demand then
-    local up, down = item.direction == 1, item.direction == -1
-    local tc = up and "|cff5fd38d" or (down and "|cffff6b6b" or "|cffcccccc")
-    local label = (trend and demand) and "Trend · Nachfrage" or (trend and "Trend" or "Nachfrage")
-    local value = (trend and (tc .. trend .. "|r") or "") .. ((trend and demand) and "  ·  " or "") .. (demand or "")
-    tooltip:AddDoubleLine(C .. label, value, 0.7, 0.7, 0.7, 1, 1, 1)
-  end
-  -- Crafting: cost to make it and profit against selling it (the recipe's details: "Alle Produkte").
+  -- Crafting: one line, the profit (or loss) of making it - for a recipe item of making what it
+  -- teaches. Market value, trend, demand and the recipe's details: market data window.
+  local profit
   local craft = on("crafting") and crafting(itemID)
-  if craft then
-    local profit = ns.Item.SellNet(item) - craft.cost
-    tooltip:AddLine(" ")
-    tooltip:AddLine(C .. "Crafting", 1, 1, 1)
-    tooltip:AddDoubleLine("    Herstellkosten", ns.FormatMoney(math.floor(craft.cost + 0.5)), 0.7, 0.7, 0.7, 1, 1, 1)
-    tooltip:AddDoubleLine("    Gewinn", (profit >= 0 and "|cff5fd38d" or "|cffff6b6b-")
-      .. ns.FormatMoney(math.floor(math.abs(profit) + 0.5)) .. "|r", 0.7, 0.7, 0.7, 1, 1, 1)
-  end
-  -- Recipe items: what the recipe teaches and what making its product brings (Crafting.lua).
-  local teach = on("recipe") and ns.RecipeTeachInfo and ns.RecipeTeachInfo(itemID)
-  if teach then
-    local t = teach.teaches
-    local function m(c) return ns.FormatMoney(math.floor(c + 0.5), true) end
-    local what = t.product and ((ns.ItemName(t.product) or ("#" .. t.product))
-      .. (t.qty > 1 and string.format(" x%g", t.qty) or "")) or (t.name or "?")
-    local need = ns.ProfessionShort(t.profession) .. (t.skill and (" " .. t.skill) or "")
-    tooltip:AddLine(" ")
-    tooltip:AddLine(C .. "Rezept lehrt: " .. what .. " (" .. need .. ") · " .. ns.RecipeOwnText(teach), 1, 1, 1)
-    local cost = teach.cost and m(teach.cost)
-      or ("|cffffb547?|r" .. (teach.missing and (" (kein Preis: " .. (ns.ItemName(teach.missing) or "?") .. ")") or ""))
-    local parts
-    if t.product then
-      parts = { "Herstellung " .. cost, "bringt " .. m(teach.value) .. (teach.onAH and "" or " (Händler)") }
-      if teach.profit then
-        table.insert(parts, "Gewinn " .. (teach.profit >= 0 and "|cff5fd38d+" or "|cffff6b6b-") .. m(math.abs(teach.profit)) .. "|r")
-      end
-      local demand = ns.Item.DemandText(teach.product)
-      if demand then table.insert(parts, "Nachfrage " .. demand) end
-    else
-      parts = { "Material " .. cost, "Verzauberung (kein Item)" }
-    end
-    tooltip:AddLine(C .. "  " .. table.concat(parts, " · "), 0.8, 0.8, 0.8)
-  end
-  -- Gap between the auction house block and the merchant price.
-  if on("vendor") then tooltip:AddLine(" ") end
-  if on("vendor") then
-    tooltip:AddDoubleLine(C .. "Händler zahlt", item.vendorSell and ns.FormatMoney(item.vendorSell) or "nichts",
-      1, 1, 1, 1, 1, 1)
+  if craft then profit = ns.Item.SellNet(item) - craft.cost end
+  local teach = not profit and on("recipe") and ns.RecipeTeachInfo and ns.RecipeTeachInfo(itemID)
+  if teach and teach.teaches.product then profit = teach.profit or false end
+  if profit ~= nil then
+    local text = profit == false and "|cffffb547? (ein Preis fehlt)|r"
+      or ((profit >= 0 and "|cff5fd38d+" or "|cffff6b6b-") .. ns.FormatMoney(math.floor(math.abs(profit) + 0.5)) .. "|r")
+    tooltip:AddDoubleLine(C .. (teach and "Crafting (Produkt)" or "Crafting"), text, 0.7, 0.7, 0.7, 1, 1, 1)
   end
   -- Where the full detail opens (ItemDetail.lua); switchable like the other lines.
   if on("hint") then tooltip:AddLine(C .. "Alt+Klick: Details", 0.55, 0.55, 0.55) end
