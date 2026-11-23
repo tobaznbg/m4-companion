@@ -801,7 +801,9 @@ local function productEntries(pid)
   local out = {}
   local function entry(e)
     return { key = tostring(e.spell or e.itemID), name = e.recipe, icon = itemIcon(e.itemID), itemID = e.itemID,
-      coins = e.onAH and ns.CoinCount(e.profit) or 0, coinsHot = ns.CoinHot(e.demand), locked = not e.learned, e = e }
+      coins = e.onAH and ns.CoinCount(e.profit) or 0, coinsHot = ns.CoinHot(e.demand), locked = not e.learned,
+      -- not learned: the name greyed, like a recipe out of reach
+      color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e }
   end
   -- another player's profession window: what they know is not known here, so nothing is
   -- shown as locked
