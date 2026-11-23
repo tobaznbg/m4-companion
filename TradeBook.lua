@@ -404,31 +404,36 @@ end
 -- Erlös - Materialeinkauf + Bestandsveränderung - Gebühren (Bestandsveränderung = Einkauf -
 -- Wareneinsatz: what of the purchases is not sold yet, as raw material or in products).
 local function overviewFigures(g)
-  local delta = (g.spent or 0) - (g.cost or 0)
+  local buy = (g.spent or 0) + (g.tin or 0)
+  local delta = buy - (g.cost or 0) - (g.tout or 0)
   local function pct(a, b) return (b and b ~= 0) and string.format("%d %%", math.floor(a / b * 100 + 0.5)) or "–" end
-  return { sub = "Beruf – Material eingekauft, Produkte verkauft", topTitle = "",
-    labels = { "Erlös", "Materialeinkauf", "Bestandsveränderung", "Gebühren", "Marge", "Gewinn" },
-    values = { money(g.revenue), RED .. "-" .. money(g.spent) .. "|r", signed(delta), money(g.fees),
-      pct(g.profit or 0, g.revenue), signed(g.profit) } }
+  return { sub = "Beruf – Material eingekauft, verkauft", topTitle = "",
+    labels = { "Erlös", "Materialeinkauf", "An andere Berufe abgegeben", "Bestandsveränderung", "Gebühren", "Marge", "Gewinn" },
+    values = { money(g.revenue), RED .. "-" .. money(buy) .. "|r", (g.tout or 0) > 0 and signed(g.tout) or "–",
+      signed(delta), money(g.fees), pct(g.profit or 0, g.revenue), signed(g.profit) } }
 end
 
--- The three parts of a profession with bought material; they add up to its profit:
--- Einkauf (all material bought) + Verkauf netto (all sales after fees) + Bestand (what of it is
--- still there, at cost: material left and products in stock) = Gewinn.
-local function buyFigures(m)
-  return { sub = "Einkauf – alles Material, das du gekauft hast", topTitle = "",
-    labels = { "Einkauf", "Gekauft", "In Produkte verarbeitet", "Roh wieder verkauft", "Noch vorhanden" },
-    values = { RED .. "-" .. money(m.spent) .. "|r", (m.bought or 0) .. " Stück",
+-- The parts of a profession with bought material; they add up to its profit:
+-- Einkauf (bought, and material handed over by another profession at cost) + Abgegeben (own
+-- material another profession used, at cost) + Verkauf netto (all sales after fees) + Bestand
+-- (what of it is still there, at cost: material left and products in stock) = Gewinn.
+local function buyFigures(g, m)
+  return { sub = "Einkauf – Material, gekauft oder aus einem anderen Beruf übernommen", topTitle = "",
+    labels = { "Gekauft", "Aus anderen Berufen übernommen", "Einkauf", "Davon verarbeitet / abgegeben", "Roh wieder verkauft", "Noch vorhanden" },
+    values = { RED .. "-" .. money(g.spent) .. "|r", (g.tin or 0) > 0 and (RED .. "-" .. money(g.tin) .. "|r") or "–",
+      RED .. "-" .. money((g.spent or 0) + (g.tin or 0)) .. "|r",
       string.format("%d Stück · %s", m.used or 0, money(m.usedValue)),
       string.format("%d Stück", m.sold or 0), string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)) } }
 end
 
 local function sellFigures(g, m, pr)
   return { sub = "Verkauf – Produkte und roh verkauftes Material, nach Gebühren", topTitle = "",
-    labels = { "Erlös Produkte", "Erlös Material (roh)", "Gebühren", "Verkauft", "Verkauf netto" },
+    labels = { "Erlös Produkte / Beute", "Erlös Material (roh)", "Gebühren", "Verkauft", "Verkauf netto" },
     values = { money(pr.revenue), money(m.revenue), RED .. "-" .. money(g.fees) .. "|r",
       string.format("%d Stück", (pr.sold or 0) + (m.sold or 0)), signed((g.revenue or 0) - (g.fees or 0)) } }
 end
+
+local function stockValueOf(g) return (g.spent or 0) + (g.tin or 0) - (g.cost or 0) - (g.tout or 0) end
 
 local function stockFigures(g, m, pr)
   return { sub = "Bestand – was vom Einkauf noch da ist (zum Einkaufspreis)", topTitle = "",
@@ -436,7 +441,12 @@ local function stockFigures(g, m, pr)
     values = { string.format("%d Stück · %s", m.stockUnits or 0, money(m.stockValue)),
       string.format("%d Stück · %s", pr.stockUnits or 0, money(pr.stockValue)),
       string.format("%d Stück · %s", (m.gone or 0) + (pr.gone or 0), money((m.goneValue or 0) + (pr.goneValue or 0))),
-      signed((g.spent or 0) - (g.cost or 0)) } }
+      signed(stockValueOf(g)) } }
+end
+
+local function handoverFigures(g, list)
+  return { sub = "Abgegeben – eigenes Material, das ein anderer Beruf verarbeitet hat (zum Einkaufspreis)", topTitle = "",
+    labels = { "Abgegeben" }, values = { signed(g.tout or 0) } }
 end
 
 local AREA_ICONS = { trade = "Interface\\Icons\\INV_Misc_Coin_02", farmed = "Interface\\Icons\\INV_Misc_Bag_10",
@@ -564,18 +574,23 @@ local function buildLedger(page)
       area.Figures.line:SetPoint("BOTTOMLEFT", area.Figures.labels[#f.labels], "TOPLEFT", 0, 4)
     end
     local rows = {}
-    for _, r in ipairs(entry.items) do
+    for _, x in ipairs(entry.items) do
+      local r = x.r or x
       local value = entry.isLoot and money(r.revenue) or resultText(r)
       local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
       local mode = entry.listMode
+      local label
       if mode == "buy" then
-        units, value = tostring(r.bought or 0), RED .. "-" .. money(r.spent) .. "|r"
+        units, value = x.from and (MUTED .. "übern.|r") or tostring(x.n or 0), RED .. "-" .. money(x.v) .. "|r"
+        if x.from then label = (r.name or ns.ItemName(r.itemId) or "?") .. MUTED .. " (aus " .. shortGroup(x.from) .. ")|r" end
+      elseif mode == "out" then
+        units, value = MUTED .. shortGroup(x.to) .. "|r", signed(x.v)
       elseif mode == "sell" then
         units, value = tostring(r.sold or 0), signed((r.revenue or 0) - (r.fees or 0))
       elseif mode == "stock" then
         units, value = tostring(r.stockUnits or 0), money(r.stockValue)
       end
-      rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), r.name or ns.ItemName(r.itemId) or "?",
+      rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), label or r.name or ns.ItemName(r.itemId) or "?",
         units, value, onClick = function() showItem(r, true) end,
         ownUseMenu = r.prof == ns.Profit.TRADE or r.prof == ns.Profit.OWN }
     end
@@ -635,6 +650,10 @@ local function buildLedger(page)
     for _, g in ipairs(report.groups) do if g.name == P.OWN then ordered[#ordered + 1] = g end end
     local entries = { { key = "areas", header = "Bereiche" } }
     allItems = {}
+    local allMaterial = {}
+    for _, list in pairs(report.items) do
+      for _, r in ipairs(list) do if r.kind == "material" then allMaterial[#allMaterial + 1] = r end end
+    end
     for _, g in ipairs(ordered) do
       local items = {}
       for _, r in ipairs(report.items[g.name] or {}) do items[#items + 1] = r; allItems[#allItems + 1] = r end
@@ -649,8 +668,19 @@ local function buildLedger(page)
       for _, r in ipairs(items) do
         if r.kind == "material" then mats[#mats + 1] = r else prods[#prods + 1] = r end
       end
-      if #mats > 0 then
-        -- a crafting profession with bought material: the whole, then material and products
+      -- material handed over between professions (leather from Kürschnerei to Lederverarbeitung)
+      local tin, tout, inRows, outRows = 0, 0, {}, {}
+      for _, r in ipairs(allMaterial) do
+        for prof, v in pairs(r.usedBy or {}) do
+          if prof ~= r.prof and v > 0 then
+            if prof == g.name then tin = tin + v; inRows[#inRows + 1] = { r = r, v = v, from = r.prof } end
+            if r.prof == g.name then tout = tout + v; outRows[#outRows + 1] = { r = r, v = v, to = prof } end
+          end
+        end
+      end
+      g.tin, g.tout = math.floor(tin + 0.5), math.floor(tout + 0.5)
+      if #mats > 0 or tin > 0 then
+        -- a profession with bought material: the whole, then its parts (they add up to the profit)
         local m, pr = P.Sum(mats, g.name), P.Sum(prods, g.name)
         local all = {}
         for _, r in ipairs(prods) do all[#all + 1] = r end
@@ -659,21 +689,28 @@ local function buildLedger(page)
           value = signed(g.profit), figures = overviewFigures(g), items = all }
         local buys, sells, stock = {}, {}, {}
         for _, r in ipairs(all) do
-          if r.kind == "material" and (r.bought or 0) > 0 then buys[#buys + 1] = r end
+          if r.kind == "material" and (r.bought or 0) > 0 then buys[#buys + 1] = { r = r, v = r.spent, n = r.bought } end
           if (r.sold or 0) > 0 or (r.fees or 0) > 0 then sells[#sells + 1] = r end
           if (r.stockUnits or 0) > 0 then stock[#stock + 1] = r end
         end
-        table.sort(buys, function(a, b) return (a.spent or 0) > (b.spent or 0) end)
+        for _, x in ipairs(inRows) do buys[#buys + 1] = { r = x.r, v = x.v, from = x.from } end
+        table.sort(buys, function(a, b) return (a.v or 0) > (b.v or 0) end)
         table.sort(sells, function(a, b) return (a.revenue - a.fees) > (b.revenue - b.fees) end)
         table.sort(stock, function(a, b) return (a.stockValue or 0) > (b.stockValue or 0) end)
         entries[#entries + 1] = { key = g.name .. ":buy", areaEntry = true, indent = 14, name = "Einkauf",
-          title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent) .. "|r",
-          figures = buyFigures(m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+          title = g.name .. " – Einkauf", icon = icon, value = RED .. "-" .. money(g.spent + g.tin) .. "|r",
+          figures = buyFigures(g, m), items = buys, listMode = "buy", heads = { "Item", "Stück", "Einkauf" } }
+        if g.tout > 0 then
+          table.sort(outRows, function(a, b) return a.v > b.v end)
+          entries[#entries + 1] = { key = g.name .. ":out", areaEntry = true, indent = 14, name = "Abgegeben",
+            title = g.name .. " – Abgegeben", icon = icon, value = signed(g.tout),
+            figures = handoverFigures(g), items = outRows, listMode = "out", heads = { "Item", "an", "Wert" } }
+        end
         entries[#entries + 1] = { key = g.name .. ":sell", areaEntry = true, indent = 14, name = "Verkauf (netto)",
           title = g.name .. " – Verkauf", icon = icon, value = signed((g.revenue or 0) - (g.fees or 0)),
           figures = sellFigures(g, m, pr), items = sells, listMode = "sell", heads = { "Item", "Stück", "Netto" } }
         entries[#entries + 1] = { key = g.name .. ":stock", areaEntry = true, indent = 14, name = "Bestand",
-          title = g.name .. " – Bestand", icon = icon, value = signed((g.spent or 0) - (g.cost or 0)),
+          title = g.name .. " – Bestand", icon = icon, value = signed(stockValueOf(g)),
           figures = stockFigures(g, m, pr), items = stock, listMode = "stock", heads = { "Item", "Stück", "Wert" } }
       else
         entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,

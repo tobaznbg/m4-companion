@@ -167,7 +167,7 @@ end
 
 local function newFigures()
   return { revenue = 0, materials = 0, fees = 0, cut = 0, depositsLost = 0, crafted = 0, sold = 0,
-    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0 }
+    bought = 0, spent = 0, soldCost = 0, expired = 0, cancelled = 0, used = 0, usedValue = 0, usedBy = {} }
 end
 
 -- Replays the ledger: per item figures in the period and the pools at the end.
@@ -264,6 +264,7 @@ local function replay(since)
             if inPeriod then
               local f = figures(g.i, TRADE)
               f.used, f.usedValue = f.used + kb, f.usedValue + bv
+              f.usedBy[e.prof or UNKNOWN] = (f.usedBy[e.prof or UNKNOWN] or 0) + bv
             end
           end
         end
@@ -368,11 +369,15 @@ local function ownProfessions(act)
   return own
 end
 
--- Only professions of the household count: a reagent of none of them stays in TRADE.
+-- Only professions of the household count: a reagent of none of them stays in TRADE. What a
+-- gathering profession of the household yields (leather: Kürschnerei, fish: Angeln) belongs to
+-- it, also when bought; a crafting profession using it gets it handed over at cost (usedBy).
 local function materialOf(id, act, own)
+  own = own or ownProfessions(act)
+  local gather = farmGroup(id)
+  if gather ~= FARMED and own[gather] then return gather end
   local recipes = reagentProfessions(id)
   if not recipes then return nil end
-  own = own or ownProfessions(act)
   local best, n = nil, 0
   for prof, units in pairs(act and act.usedBy[id] or {}) do
     if recipes[prof] and own[prof] and units > n then best, n = prof, units end
@@ -414,7 +419,7 @@ local function row(id, group, f, p, kind, left)
   end
   local cost = (group == OWN and round(f.materials) or round(f.soldCost)) + round(goneValue)
   return {
-    gone = gone, goneValue = round(goneValue),
+    gone = gone, goneValue = round(goneValue), usedBy = f.usedBy,
     itemId = id, prof = group, kind = kind, name = ns.ItemName and ns.ItemName(id) or nil,
     used = f.used, usedValue = round(f.usedValue),
     crafted = f.crafted, sold = f.sold, bought = f.bought, spent = round(f.spent),
