@@ -840,8 +840,10 @@ local function productEntries(pid)
   end)
   for _, g in ipairs(order) do
     out[#out + 1] = { key = "h:" .. g.name, header = g.name }
+    -- most profit on top within the category (gathering: the value per piece)
     table.sort(g.items, function(a, b)
-      if a.learned ~= b.learned then return a.learned end
+      local pa, pb = a.profit or a.value or 0, b.profit or b.value or 0
+      if pa ~= pb then return pa > pb end
       return (a.recipe or "") < (b.recipe or "")
     end)
     for _, e in ipairs(g.items) do out[#out + 1] = entry(e) end
@@ -1186,6 +1188,29 @@ local function productCard(c)
   v.Line = c:CreateTexture(nil, "ARTWORK")
   v.Line:SetColorTexture(1, 0.82, 0, 0.25)
   v.Line:SetHeight(1)
+  -- "Auf die Einkaufsliste" under the profit, like the profession window's button: once per
+  -- click (Shift: 5), the list opens on it
+  local okB, shop = pcall(CreateFrame, "Button", nil, c, "UIPanelButtonTemplate")
+  if okB and shop then
+    shop:SetSize(170, 22)
+    shop:SetText("Auf die Einkaufsliste")
+    shop:SetScript("OnClick", function()
+      local e = v.entry
+      if not (e and ns.ShoppingList and ns.ShoppingList.AddRecipe) then return end
+      local w = ns.ShoppingList.AddRecipe({ rid = e.spell, out = e.itemID, name = e.recipe, pid = e.pid,
+        q = e.produced, reagents = e.reagents }, IsShiftKeyDown and IsShiftKeyDown() and 5 or 1)
+      if w and ns.ShoppingList.Show then ns.ShoppingList.Show(w.rid) end
+    end)
+    shop:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:SetText("Auf die Einkaufsliste")
+      GameTooltip:AddLine("Ein Mal pro Klick, mit Shift fünf Mal; was dein Haushalt hat, wird abgezogen.", 1, 1, 1, true)
+      GameTooltip:Show()
+    end)
+    shop:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    shop:Hide()
+    v.Shop = shop
+  end
   return v
 end
 
@@ -1229,7 +1254,10 @@ local function showProduct(entry, c)
   if productsSplit and productsSplit.empty then
     productsSplit.empty:SetText(shown and "" or "Keine Rezepte für diesen Filter.")
   end
-  if not shown then return end
+  if not shown then
+    if v.Shop then v.Shop:Hide() end
+    return
+  end
   v.Icon:SetTexture(itemIcon(e.itemID))
   v.itemID = e.itemID
   v.Name:SetText(qualityName(e.itemID, e.recipe)
@@ -1322,13 +1350,23 @@ local function showProduct(entry, c)
   v.Line:ClearAllPoints()
   v.Line:SetPoint("BOTTOMLEFT", gewinn, "TOPLEFT", 0, 3)
   v.Line:SetPoint("RIGHT", v.layer, "RIGHT", -RIGHT_EDGE + 2, 0)
+  -- a recipe that makes an item can go on the shopping list (not a gathered material)
+  v.entry = e
+  local bottomOf = gewinn
+  if v.Shop then
+    local can = not e.gather and e.itemID ~= nil and type(e.reagents) == "table" and #e.reagents > 0
+    v.Shop:ClearAllPoints()
+    v.Shop:SetPoint("TOPLEFT", gewinn, "BOTTOMLEFT", 0, -12)
+    v.Shop:SetShown(can)
+    if can then bottomOf = v.Shop end
+  end
   -- the content as tall as what it shows (measured once laid out), from the top again
   local scroll, layer = v.scroll, v.layer
   local w = scroll:GetWidth()
   if w and w > 0 then layer:SetWidth(w) end
   scroll:SetVerticalScroll(0)
   local function fit()
-    local top, bottom = layer:GetTop(), gewinn:GetBottom()
+    local top, bottom = layer:GetTop(), bottomOf:GetBottom()
     if top and bottom then layer:SetHeight(math.max(1, top - bottom + 18)) end
     if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
   end

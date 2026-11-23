@@ -275,6 +275,27 @@ function List.Add(rid, n, set)
   return w
 end
 
+-- A recipe from "Alle Produkte" (Crafting.lua): spec = { rid, out, name, pid, q = made per craft,
+-- reagents = { { i, n }… } }. Known to a scan or the skill data by its spell id it goes through
+-- List.Add; else (no household character has scanned it) the wish keeps the reagents it brings.
+function List.AddRecipe(spec, n)
+  if spec.rid and scanRecipe(spec.rid) then return List.Add(spec.rid, n) end
+  if not (spec.out and type(spec.reagents) == "table") then return nil end
+  n = math.max(1, math.floor(n or 1))
+  changed()
+  for _, w in ipairs(wishes()) do
+    if w.kind ~= "pattern" and w.rid == spec.rid and w.out == spec.out then
+      w.n = w.n + n
+      return w
+    end
+  end
+  local w = { rid = spec.rid, out = spec.out, name = spec.name or ns.ItemName(spec.out), pid = spec.pid, n = n,
+    r = {}, q = spec.q or 1 }
+  for _, g in ipairs(spec.reagents) do w.r[#w.r + 1] = { i = g.i, n = g.n } end
+  table.insert(wishes(), w)
+  return w
+end
+
 -- Window ------------------------------------------------------------------------------------------
 
 local window, split, selected
