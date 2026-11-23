@@ -71,7 +71,15 @@ local function recordMerchant()
       id = link and tonumber(link:match("item:(%d+)"))
     end
     if id and isRecipe(id) then
-      local ok, _, _, price, _, numAvailable = pcall(GetMerchantItemInfo, i)
+      -- price and stock: the classic function, else the modern C_MerchantFrame.GetItemInfo (table)
+      local ok, price, numAvailable = false, nil, nil
+      if GetMerchantItemInfo then
+        local _
+        ok, _, _, price, _, numAvailable = pcall(GetMerchantItemInfo, i)
+      elseif C_MerchantFrame and C_MerchantFrame.GetItemInfo then
+        local okI, info = pcall(C_MerchantFrame.GetItemInfo, i)
+        if okI and type(info) == "table" then ok, price, numAvailable = true, info.price, info.numAvailable end
+      end
       local limited = ok and numAvailable and numAvailable >= 0
       items[id] = { p = ok and price or nil, lim = limited and 1 or nil, n = limited and numAvailable or nil, t = time() }
     end
