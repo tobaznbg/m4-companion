@@ -8,7 +8,8 @@
 --   merchant = { [npcID] = { name, zone, map, x, y, t, items = { [itemID] = { p = copper, lim = 1|nil, n = units
 --                there now (limited stock), t } }, visits = { { t, s = { [itemID] = units } }… } } },
 --              visits: the stock of its limited recipes per visit (0 = a limited recipe seen before is
---              gone: sold out), the last 50 - when it restocks
+--              gone: sold out), the last 50 - when it restocks; copy = the NPC copy (GUID server-
+--              instance-zone: a layer / shard has its own NPCs and maybe its own stock)
 --   trainer  = { [npcID] = { name, zone, map, x, y, t, skill = profession, s = { [service name] =
 --                { req = skill needed, c = copper, t } } } },
 --   loot     = { [itemID] = { [source] = { n = times, t = last } } } }   source: npc id, or "o<id>" for an object
@@ -99,7 +100,13 @@ local function recordMerchant()
     e.visits = e.visits or {}
     local last = e.visits[#e.visits]
     -- one entry per visit (MERCHANT_UPDATE fires several times while the window is open)
-    if last and time() - last.t < 120 then last.s = stock else table.insert(e.visits, { t = time(), s = stock }) end
+    -- the NPC's copy (server / instance / zone part of its GUID): with layers or shards every copy
+    -- may have its own stock
+    local guid = UnitGUID and UnitGUID("npc")
+    local _, _, server, instance, zone = strsplit("-", guid or "")
+    local copy = server and (server .. "-" .. (instance or "") .. "-" .. (zone or "")) or nil
+    if last and time() - last.t < 120 then last.s, last.copy = stock, copy
+    else table.insert(e.visits, { t = time(), s = stock, copy = copy }) end
     while #e.visits > 50 do table.remove(e.visits, 1) end
   end
 end
