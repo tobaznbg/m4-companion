@@ -336,7 +336,8 @@ local PROFESSIONS = { ["Lederverarbeitung"] = true, ["Schneiderei"] = true, ["Sc
   ["Alchemie"] = true, ["Alchimie"] = true, ["Ingenieurskunst"] = true, ["Verzauberkunst"] = true,
   ["Kochkunst"] = true, ["Erste Hilfe"] = true, ["Bergbau"] = true, ["Kürschnerei"] = true,
   ["Kräuterkunde"] = true, ["Angeln"] = true }
-local lastUse   -- { itemID, t, before = bag counts }
+local lastUse   -- { itemID, t, before = bag counts } (used from the bags)
+local lastSpell -- { spellID, t, before = bag counts } (any cast, e.g. a tool on the action bar)
 local pendingTool -- a tool craft waiting for the bags to show what was used up
 
 local function bagCounts()
@@ -370,6 +371,34 @@ function Ledger.OnItemUse(bag, slot)
   lastUse = { itemID = info.itemID, t = time(), before = bagCounts() }
 end
 
+-- A tool used from the action bar or by a macro never passes UseContainerItem: the cast is
+-- recorded too, and the tool is the carried item whose use spell it was.
+ns.On("UNIT_SPELLCAST_SENT", function(_, unit, _, _, spellID)
+  if unit == "player" and spellID then lastSpell = { spellID = spellID, t = time(), before = bagCounts() } end
+end)
+
+local function itemSpellID(itemID)
+  local get = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+  if not get then return nil end
+  local ok, _, sid = pcall(get, itemID)
+  return ok and sid or nil
+end
+
+-- The tool behind a loot line at time now: { itemID, prof, before } or nil.
+local function recentTool(now)
+  local use = lastUse
+  local prof = use and now - use.t <= TOOL_WINDOW and toolProfession(use.itemID)
+  if prof then return use.itemID, prof, use.before end
+  local cast = lastSpell
+  if not (cast and now - cast.t <= TOOL_WINDOW) then return nil end
+  for id in pairs(cast.before) do
+    if itemSpellID(id) == cast.spellID then
+      prof = toolProfession(id)
+      if prof then return id, prof, cast.before end
+    end
+  end
+end
+
 local function finishToolCraft()
   local p = pendingTool
   pendingTool = nil
@@ -398,11 +427,10 @@ local function onCreated(itemID, count)
   local shipped = shippedRecipe(itemID)
   if not shipped then
     -- made with a profession's tool used just before
-    local use = lastUse
-    local prof = use and now - use.t <= TOOL_WINDOW and toolProfession(use.itemID)
-    if prof then
-      pendingTool = { itemID = itemID, count = count, prof = prof, tool = use.itemID, before = use.before }
-      lastUse = nil
+    local tool, prof, before = recentTool(now)
+    if tool then
+      pendingTool = { itemID = itemID, count = count, prof = prof, tool = tool, before = before }
+      lastUse, lastSpell = nil, nil
       if C_Timer then C_Timer.After(2, function() if pendingTool then ns.Safe(finishToolCraft) end end) end
     end
     return
@@ -723,6 +751,34 @@ ns.OnReady(function()
     src = "tool", prof = "Lederverarbeitung", r = { { i = 8150, n = 1 } } }
   table.insert(events, e)
   table.sort(events, function(x, y) return (x.t or 0) < (y.t or 0) end)
+end)
+
+-- One-time data fix (23 Nov 2026): the salt shaker used from the action bar was not recognised
+-- (only uses from the bags were). Every post of Raffiniertes Tiefsteinsalz without enough salt
+-- crafted or bought before gets the missing craft a minute before it (Deeprock salt per unit).
+-- Deterministic times, so the sync keeps one copy.
+ns.OnReady(function()
+  for _, b in pairs(ns.db.ledger or {}) do
+    if type(b) == "table" and type(b.events) == "table" and not b.toolFix2 then
+      b.toolFix2 = true
+      local have, missing = 0, {}
+      for _, e in ipairs(b.events) do
+        if e.i == 15409 then
+          local u = e.u or 1
+          if e.k == "craft" or e.k == "buy" or e.k == "cancelled" or e.k == "expired" then have = have + u
+          elseif e.k == "post" then
+            if have < u then table.insert(missing, { t = (e.t or time()) - 60, u = u - have }); have = u end
+            have = have - u
+          end
+        end
+      end
+      for _, m in ipairs(missing) do
+        table.insert(b.events, { t = m.t, k = "craft", i = 15409, n = nameOf(15409), u = m.u, x = m.u,
+          src = "tool", prof = "Lederverarbeitung", tool = 15846, r = { { i = 8150, n = m.u } } })
+      end
+      if #missing > 0 then table.sort(b.events, function(x, y) return (x.t or 0) < (y.t or 0) end) end
+    end
+  end
 end)
 
 -- One-time import of purchases the sniper logged before the ledger existed (16 Nov 2026), once
