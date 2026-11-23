@@ -66,12 +66,15 @@ local function card(page, w, x, y, width, height, title)
 end
 
 -- A table in a card: column heads, a gold rule and a scroll list of rows (Blizzard's scroll box
--- and minimal scroll bar). Returns setRows(rows), rows = { { icon = …, itemID = …, text1, … } }.
+-- and minimal scroll bar). Returns setRows(rows, heads), rows = { { icon = …, itemID = …, text1, … } },
+-- heads = other column heads for these rows (nil: the ones given here).
 local function scrollTable(c, cols, top)
-  for _, col in ipairs(cols) do
+  local heads = {}
+  for i, col in ipairs(cols) do
     local h = c:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     if col[3] == "LEFT" then h:SetPoint("TOPLEFT", col[2], top) else h:SetPoint("TOPRIGHT", c, "TOPLEFT", col[2], top) end
     h:SetText(col[1])
+    heads[i] = h
   end
   local rule = c:CreateTexture(nil, "ARTWORK")
   rule:SetColorTexture(1, 0.82, 0, 0.25)
@@ -135,7 +138,8 @@ local function scrollTable(c, cols, top)
     for k = 1, #cols do row.m4[k]:SetText(r[k] or "") end
   end)
   ScrollUtil.InitScrollBoxListWithScrollBar(box, bar, view)
-  return function(rows)
+  return function(rows, texts)
+    for i, h in ipairs(heads) do h:SetText(texts and texts[i] or cols[i][1]) end
     empty:SetText(#rows == 0 and "Keine Einträge" or "")
     box:SetDataProvider(CreateDataProvider(rows))
   end
@@ -411,7 +415,7 @@ end
 -- The bought material of a profession: bought, used in crafts, rest sold raw or still there.
 local function materialFigures(g)
   return { sub = "Material – gekauft, verarbeitet, Rest verkauft", topTitle = "",
-    labels = { "Einkauf", "Verarbeitet", "Roh verkauft", "Gebühren", "Noch vorhanden", "Ergebnis Restverkauf" },
+    labels = { "Einkauf", "In Produkte verarbeitet", "Roh verkauft", "Gebühren", "Noch vorhanden", "Ergebnis (Restverkauf)" },
     values = { RED .. "-" .. money(g.spent) .. "|r",
       string.format("%d Stück · %s", g.used or 0, money(g.usedValue)),
       string.format("%d Stück · %s", g.sold or 0, money(g.revenue)), money(g.fees),
@@ -546,15 +550,15 @@ local function buildLedger(page)
     for _, r in ipairs(entry.items) do
       local value = entry.isLoot and money(r.revenue) or resultText(r)
       local units = (r.sold or 0) > 0 and tostring(r.sold) or (MUTED .. "–|r")
-      if r.kind == "material" then
-        -- material: units bought, what they cost
+      if r.kind == "material" and entry.materialList then
+        -- the material list: units bought, what they cost (column "Einkauf")
         units, value = MUTED .. (r.bought or 0) .. " gek.|r", RED .. "-" .. money(r.spent) .. "|r"
       end
       rows[#rows + 1] = { itemID = r.itemId, icon = iconOf(r.itemId), r.name or ns.ItemName(r.itemId) or "?",
         units, value, onClick = function() showItem(r, true) end,
         ownUseMenu = r.prof == ns.Profit.TRADE or r.prof == ns.Profit.OWN }
     end
-    area.SetItems(rows)
+    area.SetItems(rows, entry.materialList and { "Item", "Stück", "Einkauf" } or nil)
   end
 
   local split = NW.Split(page, {
@@ -633,10 +637,10 @@ local function buildLedger(page)
         entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
           value = signed(g.profit), figures = overviewFigures(g), items = all }
         entries[#entries + 1] = { key = g.name .. ":mat", areaEntry = true, indent = 14, name = "Material",
-          title = g.name .. " – Material", icon = icon, value = RED .. "-" .. money(m.spent) .. "|r",
-          figures = materialFigures(m), items = mats }
+          title = g.name .. " – Material", icon = icon, value = signed(m.profit),
+          figures = materialFigures(m), items = mats, materialList = true }
         entries[#entries + 1] = { key = g.name .. ":prod", areaEntry = true, indent = 14, name = "Produkte",
-          title = g.name .. " – Produkte", icon = icon, value = GREEN .. "+" .. money(pr.revenue) .. "|r",
+          title = g.name .. " – Produkte", icon = icon, value = signed(pr.profit),
           figures = areaFigures(pr, prods), items = prods }
       else
         entries[#entries + 1] = { key = g.name, areaEntry = true, name = shortGroup(g.name), icon = icon,
