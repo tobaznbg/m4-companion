@@ -1035,6 +1035,14 @@ local function collectStock()
     end
   end
   local transit = P and P.Transit and P.Transit() or {}
+  -- the area of an item exactly as in the ledger (Profit: product, material or loot of a
+  -- household profession, else Handel / Eigenbedarf)
+  local areaOf = {}
+  for name, list in pairs(report.items or {}) do
+    for _, r in ipairs(list) do
+      if not areaOf[r.itemId] or r.kind == "product" then areaOf[r.itemId] = shortGroup(name) end
+    end
+  end
   local function group(key, name, icon)
     local g = groups[key]
     if not g then
@@ -1079,7 +1087,7 @@ local function collectStock()
     left = left - nA
     if left > 0 then
       local maker = (s.source or ""):find("hergestellt") and ns.CraftedBy and ns.CraftedBy(s.itemId)
-      local key = maker or ((s.source or ""):find("hergestellt") and "Hergestellt" or "Handel")
+      local key = areaOf[s.itemId] or maker or ((s.source or ""):find("hergestellt") and "Hergestellt" or "Handel")
       local g = group(key, key, key == "Handel" and AREA_ICONS.trade or PROFESSION_ICONS[key] or "Interface\\Icons\\INV_Box_02")
       put(g, s, left, s.sellUnit and s.sellUnit * left or nil,
         heldBy(s.itemId) ~= "" and heldBy(s.itemId) or (key .. " · " .. (s.source or "")))
