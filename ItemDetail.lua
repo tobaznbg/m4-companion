@@ -786,9 +786,8 @@ local function renderBody()
   end
   line("Trend", trend or "–")
   -- saturation: are offers above the cheapest bought too (cloud, 7 days)
-  local satText, satPct, satColor = ns.Item.SaturationText(item)
-  line("Sättigung", satText and (satColor .. satText .. "|r  " .. Style.MUTED
-    .. string.format("(%d %% bis +5 %% verkauft)", satPct) .. "|r") or "–")
+  local satText, _, satColor = ns.Item.SaturationText(item)
+  line("Sättigung", satText and (satColor .. satText .. "|r") or "–")
   local demand = ns.Item.DemandText(item)
   line("Nachfrage", demand or "–")
   line("Angebot AH", string.format("%s Angebote  ·  %s Stück", count(item.offers), count(item.quantity)))
