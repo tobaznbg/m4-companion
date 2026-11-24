@@ -753,6 +753,46 @@ local function attachAuctions()
     end)
   end
   af:HookScript("OnHide", function() if ownDetail() then ns.Safe(ns.ItemDetail.Hide) end end)
+  -- Auto refresh of an item's offers in "Auktionen": every AUTO_REFRESH seconds the list's own
+  -- refresh button is pressed (only while that list shows and the button is enabled - the game
+  -- disables it while a query is throttled); a countdown under "n verfügbar". Changing the item
+  -- or pressing the button by hand starts it again.
+  local AUTO_REFRESH = 10
+  local left = AUTO_REFRESH
+  local timers = {}
+  for _, name in ipairs({ "ItemList", "CommoditiesList" }) do
+    local l = rawget(af, name)
+    local rf = type(l) == "table" and rawget(l, "RefreshFrame")
+    local btn = type(rf) == "table" and rawget(rf, "RefreshButton")
+    if btn then
+      local fs = rf:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+      local qty = rawget(rf, "TotalQuantity")
+      if type(qty) == "table" then fs:SetPoint("TOPRIGHT", qty, "BOTTOMRIGHT", 0, -2) else fs:SetPoint("TOPRIGHT", btn, "BOTTOMRIGHT", 0, -2) end
+      btn:HookScript("OnClick", function() left = AUTO_REFRESH end)
+      timers[#timers + 1] = { list = l, button = btn, text = fs }
+    end
+  end
+  if af.SelectItemKey then hooksecurefunc(af, "SelectItemKey", function() left = AUTO_REFRESH end) end
+  if #timers > 0 and C_Timer and C_Timer.NewTicker then
+    C_Timer.NewTicker(1, function()
+      if not af:IsVisible() then left = AUTO_REFRESH return end
+      local active
+      for _, t in ipairs(timers) do
+        local shown = t.list:IsVisible()
+        t.text:SetShown(shown)
+        if shown then active = t end
+      end
+      if not active then left = AUTO_REFRESH return end
+      local enabled = active.button.IsEnabled and active.button:IsEnabled()
+      if not enabled then active.text:SetText("Aktualisierung wartet …") return end
+      left = left - 1
+      if left <= 0 then
+        left = AUTO_REFRESH
+        ns.Safe(function() active.button:Click() end)
+      end
+      active.text:SetText(string.format("Aktualisierung in %d s", left))
+    end)
+  end
   -- Blizzard fills the list anew whenever the own auctions update (after every cancel, every
   -- query) and jumps to the top: the scroll position is kept when it is the same list again
   -- (about as many entries: one more or less after a cancel or a new auction)
