@@ -1265,10 +1265,8 @@ do
   function Fish.Drop(cancel, reason, missed)
     local p = Fish.pending
     Fish.pending = nil
-    if cancel and p and p.state ~= "buying" and C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
-      pcall(C_AuctionHouse.CancelCommoditiesPurchase)
-      Fish.cancelAt = GetTime()
-    end
+    -- no CancelCommoditiesPurchase: the game answers it with error 10 (measured); the next ask
+    -- replaces the quote
     if missed then
       Fish.missed = (Fish.missed or 0) + 1
       Fish.cooldown = GetTime() + 1
@@ -1287,13 +1285,12 @@ do
   -- Asks the server what plan.n units cost now (StartCommoditiesPurchase: a quote, no buy - the
   -- buy is ConfirmCommoditiesPurchase on the player's click). auto: asked on a new catch without
   -- a click; if the game blocks that (ADDON_ACTION_BLOCKED below) the quote waits for a click.
-  -- Measured (fishTrace, 24 Nov): an ask sent right after a cancelled quote (15-100 ms) gets
-  -- AH error 10 (DatabaseError), one a bit later is answered - asks wait ASK_GAP after a cancel.
-  local ASK_GAP = 0.3
+  -- Measured (fishTrace, 24 Nov): CancelCommoditiesPurchase is answered with AH error 10
+  -- (DatabaseError) about 0.1 s later, every time - a quote we do not want is not cancelled
+  -- but left: the next ask replaces it.
   function Fish.Ask(plan, auto)
     local api = C_AuctionHouse
     if Fish.pending or not (api and api.StartCommoditiesPurchase) then return end
-    if Fish.cancelAt and GetTime() - Fish.cancelAt < ASK_GAP then return end
     local p = { itemID = shownID, n = plan.n, sum = plan.sum, limit = plan.limit, bite = plan.baitLies,
       state = "asking", t = GetTime(), auto = auto, blind = plan.blind }
     Fish.pending = p
@@ -1681,8 +1678,6 @@ do
         if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
           Fish.stat.probes = (Fish.stat.probes or 0) + 1
           Fish.pending = nil
-          if C_AuctionHouse.CancelCommoditiesPurchase then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
-          Fish.cancelAt = GetTime()
           ns.Safe(Fish.Refresh)
           return
         end
