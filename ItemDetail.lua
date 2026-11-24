@@ -1268,6 +1268,7 @@ do
     local function X(t) return (t - v.axisStart) / span * w end
     -- the slots on the axis, the live points after the history, their prices
     local values, qmax, zeros = {}, 0, false
+    local qmin -- the smallest visible quantity: the bars scale from just under it (changes show)
     if series then
       for i = 1, #series.t0 do
         if series.t1[i] > v.axisStart and series.t0[i] < axisEnd then
@@ -1275,6 +1276,7 @@ do
           local p, q = series.p[i], series.q[i]
           if p and p > 0 then values[#values + 1] = p elseif p == 0 then zeros = true end
           if q and q > qmax then qmax = q end
+          if q and q > 0 and (not qmin or q < qmin) then qmin = q end
         end
       end
     end
@@ -1284,6 +1286,7 @@ do
         v.tail[#v.tail + 1] = pt
         if pt.p > 0 then values[#values + 1] = pt.p end
         if pt.q and pt.q > qmax then qmax = pt.q end
+        if pt.q and pt.q > 0 and (not qmin or pt.q < qmin) then qmin = pt.q end
       end
     end
     drawHead(id, e, values, rng)
@@ -1321,17 +1324,26 @@ do
     end
     lo, hi = lo or values[1], hi or values[1]
     local limit, ask = r and r[3], r and r[4]
-    for _, ref in ipairs({ e.ref or 0, limit or 0, ask or 0 }) do
-      if ref > 0 then lo, hi = math.min(lo, ref), math.max(hi, ref) end
-    end
+    -- the scale follows the prices of the range only (else far reference lines flatten the
+    -- curve); R, buy limit and target outside it become arrows on the edge
     local range = hi - lo
-    if range <= 0 then range = math.max(1, hi * 0.2) end
+    if range <= 0 then range = math.max(1, hi * 0.05) end
     local step = niceStep(range, 5)
     local bottom = math.max(0, math.floor((lo - range * 0.05) / step) * step)
     local top = math.ceil((hi + range * 0.05) / step) * step
     if top <= bottom then top = bottom + step end
     -- the quantity bars in the lowest fifth, prices above them
     local barZone = math.floor(h * 0.2)
+    -- bar height: from a base just under the smallest visible quantity to the largest, so a
+    -- change of a few percent is visible (the label names the range)
+    local qbase = 0
+    if qmin and qmax > 0 then
+      qbase = qmax > qmin and math.max(0, qmin - (qmax - qmin) * 0.25) or qmax * 0.8
+    end
+    local function qh(q)
+      if qmax <= qbase then return 1 end
+      return math.max(1, (barZone - 2) * (q - qbase) / (qmax - qbase))
+    end
     local pBottom, pTop = barZone + 8, h - 6
     local function py(p)
       p = math.max(bottom, math.min(top, p))
@@ -1360,7 +1372,7 @@ do
           local bar = take("bar")
           bar:ClearAllPoints()
           bar:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x0 + 0.5, 1)
-          bar:SetSize(math.max(1, x1 - x0 - 1), math.max(1, (barZone - 2) * q / qmax))
+          bar:SetSize(math.max(1, x1 - x0 - 1), qh(q))
         end
       end
     end
@@ -1373,12 +1385,12 @@ do
         local bar = take("tailBar")
         bar:ClearAllPoints()
         bar:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x0 + 0.5, 1)
-        bar:SetSize(math.max(2, x1 - x0 - 1), math.max(1, (barZone - 2) * pt.q / qmax))
+        bar:SetSize(math.max(2, x1 - x0 - 1), qh(pt.q))
       end
     end
     ui.qty:ClearAllPoints()
     ui.qty:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 4, barZone + 1)
-    ui.qty:SetText(qmax > 0 and ("Menge, max " .. count(qmax) .. " Stück") or "")
+    ui.qty:SetText(qmax > 0 and ("Menge " .. count(qmin or qmax) .. "–" .. count(qmax) .. " Stück") or "")
     -- the resolution hint beside it, inside the plot (the head line is full)
     ui.res:ClearAllPoints()
     ui.res:SetPoint("LEFT", ui.qty, "RIGHT", 16, 0)
@@ -1422,23 +1434,30 @@ do
     end
     -- reference lines and their labels in the right margin
     local labels = {}
+    -- a reference outside the scale: no line, its label on the edge with an arrow
+    local UP, DOWN = " |TInterface\\Buttons\\Arrow-Up-Up:12:12:0:-2|t", " |TInterface\\Buttons\\Arrow-Down-Up:12:12:0:2|t"
+    local function edge(p) return p > top and UP or (p < bottom and DOWN or nil) end
+    ui.refLine:Hide()
     if e.ref and e.ref > 0 then
+      local arrow = edge(e.ref)
       local yy = py(e.ref)
-      ui.refLine:ClearAllPoints()
-      ui.refLine:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 0, yy)
-      ui.refLine:SetPoint("BOTTOMRIGHT", ui.plot, "BOTTOMRIGHT", 0, yy)
-      ui.refLine:Show()
-      labels[#labels + 1] = { y = yy, text = "R " .. money(e.ref), rgb = { 1, 1, 1 } }
-    else
-      ui.refLine:Hide()
+      if not arrow then
+        ui.refLine:ClearAllPoints()
+        ui.refLine:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 0, yy)
+        ui.refLine:SetPoint("BOTTOMRIGHT", ui.plot, "BOTTOMRIGHT", 0, yy)
+        ui.refLine:Show()
+      end
+      labels[#labels + 1] = { y = yy, text = "R " .. money(e.ref) .. (arrow or ""), rgb = { 1, 1, 1 } }
     end
     if limit and limit > 0 then
-      dashed(py(limit), w, BUY_RGB)
-      labels[#labels + 1] = { y = py(limit), text = "Kauf " .. money(limit), rgb = BUY_RGB }
+      local arrow = edge(limit)
+      if not arrow then dashed(py(limit), w, BUY_RGB) end
+      labels[#labels + 1] = { y = py(limit), text = "Kauf " .. money(limit) .. (arrow or ""), rgb = BUY_RGB }
     end
     if ask and ask > 0 then
-      dashed(py(ask), w, SELL_RGB)
-      labels[#labels + 1] = { y = py(ask), text = "Ziel " .. money(ask), rgb = SELL_RGB }
+      local arrow = edge(ask)
+      if not arrow then dashed(py(ask), w, SELL_RGB) end
+      labels[#labels + 1] = { y = py(ask), text = "Ziel " .. money(ask) .. (arrow or ""), rgb = SELL_RGB }
     end
     -- the price now as a marker on the right edge
     if e.now and e.now > 0 then
