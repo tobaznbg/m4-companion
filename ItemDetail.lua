@@ -1790,6 +1790,7 @@ do
       if name and msg == ERR_AUCTION_SOLD_S:format(name) then
         local out = Fish.BaitsOut(shownID)
         if #out > 0 then table.remove(out, 1) end
+        Fish.ownedT, Fish.ownedAsked = nil, nil
         Fish.Trace("bait_sold", #out)
         ns.Safe(Fish.Refresh)
       end
@@ -1800,6 +1801,7 @@ do
       ns.Safe(Fish.Refresh)
     end)
     ns.On("AUCTION_HOUSE_AUCTION_CREATED", function()
+      Fish.ownedT, Fish.ownedAsked = nil, nil -- the owned list is old now: the counts stand in until asked again
       if Fish.cycle == "posting" then
         local out = Fish.BaitsOut(shownID)
         out[#out + 1] = time()
