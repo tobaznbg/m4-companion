@@ -768,7 +768,7 @@ do
   local W, H = 900, 520
   local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 80, 34 -- plot margins in the page
   local RANGES = {
-    { key = "1h", span = 3600, button = "1 Std", label = "1 Std" },
+    { key = "live", span = 20 * 60, button = "Live", label = "20 min" },
     { key = "today", today = true, button = "Heute", label = "heute" },
     { key = "2d", span = 2 * 86400, button = "2 Tage", label = "2 Tage" },
     { key = "7d", span = 7 * 86400, button = "7 Tage", label = "7 Tage" },
