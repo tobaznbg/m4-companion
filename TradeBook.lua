@@ -1075,6 +1075,7 @@ local function collectStock()
     local nA = l and math.min(left, l.n) or 0
     put(group("auction", "Im AH", "Interface\\Icons\\INV_Hammer_15"), s, nA,
       nA > 0 and l.value * nA / l.n or nil, "eingestellt – zum eigenen Preis nach Gebühr")
+    if l and nA > 0 then l.placed = (l.placed or 0) + nA end
     left = left - nA
     if left > 0 then
       local maker = (s.source or ""):find("hergestellt") and ns.CraftedBy and ns.CraftedBy(s.itemId)
@@ -1082,6 +1083,16 @@ local function collectStock()
       local g = group(key, key, key == "Handel" and AREA_ICONS.trade or PROFESSION_ICONS[key] or "Interface\\Icons\\INV_Box_02")
       put(g, s, left, s.sellUnit and s.sellUnit * left or nil,
         heldBy(s.itemId) ~= "" and heldBy(s.itemId) or (key .. " · " .. (s.source or "")))
+    end
+  end
+  -- every other running auction (loot, or bought before the ledger: no known cost) belongs in
+  -- "Im AH" too, at cost 0 - the group shows all the own auctions
+  for id, l in pairs(listed) do
+    local rest = l.n - (l.placed or 0)
+    if rest > 0 then
+      put(group("auction", "Im AH", "Interface\\Icons\\INV_Hammer_15"),
+        { itemId = id, units = rest, cost = 0, unitCost = 0, name = ns.ItemName and ns.ItemName(id) or nil },
+        rest, l.value * rest / l.n, "eingestellt – Beute oder ohne bekannten Einkauf")
     end
   end
   -- empty location groups out
