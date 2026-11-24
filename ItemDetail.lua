@@ -1269,7 +1269,8 @@ do
     local qmin -- the smallest visible quantity: the bars scale from just under it (changes show)
     if series then
       for i = 1, #series.t0 do
-        if series.t1[i] > v.axisStart and series.t0[i] < axisEnd then
+        -- the live view shows only the fine points: an hourly slot would cross it as a diagonal
+        if rng.key ~= "live" and series.t1[i] > v.axisStart and series.t0[i] < axisEnd then
           v.vis[#v.vis + 1] = i
           local p, q = series.p[i], series.q[i]
           if p and p > 0 then values[#values + 1] = p elseif p == 0 then zeros = true end
