@@ -10,7 +10,7 @@ ns.Farming = Farming
 local CUT = 0.05
 local MIN_HOURS = 48       -- collector hours before sales figures are trusted
 Farming.MIN_VALUE = 200    -- below 2 silver per unit an item is not worth farming for
-Farming.MIN_DEMAND = 2     -- ns.Item demand (cloud scale, "mittel" and up)
+Farming.MIN_DEMAND = 20    -- ns.Item demand (units bought per day, "mittel" and up)
 local LEVEL_REACH = 3      -- mobs up to this many levels above you are fine
 
 -- Skill needed to skin a mob of the given level (classic rule).
@@ -67,7 +67,7 @@ function Farming.Signal(m)
   if value < Farming.MIN_VALUE then return "wenig wert", "grey", value end
   if not m.demand then return "Absatz offen", "grey", value end
   if m.demand >= Farming.MIN_DEMAND then return "lohnt", "green", value end
-  if m.demand > 0.05 then return "wenig Nachfrage", "yellow", value end
+  if m.demand > 1 then return "wenig Nachfrage", "yellow", value end
   return "kein Absatz", "orange", value
 end
 

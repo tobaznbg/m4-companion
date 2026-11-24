@@ -559,7 +559,7 @@ end
 -- "Attraktiv": the cloud's rule for a recipe that brings gold sustainably (collector,
 -- ahprofessions.py): at least 5 silver profit per craft via the auction house and demand of at
 -- least "mittel"; ranked by profit x demand (capped at 20) - a ranking aid, not gold per day.
-local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 1, 20
+local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 10, 200 -- demand: units bought per day
 
 -- Gold coins of a recipe (profession window, "Alle Produkte", Berufsübersicht), per item:
 --   Marge     = profit / material cost per craft (what one gold put in brings back)
@@ -572,7 +572,7 @@ local MIN_PROFIT, MIN_DEMAND, DEMAND_CAP = 500, 1, 20
 --   the Kennzahl (2.0), "hoch" and up as computed.
 --   Margin under the minimum margin: no coins at all (not worth the risk).
 --   The minimum margin is the filter "Mindestmarge" of Alle Produkte (default 30 %, "aus" = 0).
-local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID = 1000, 1.0, 0.3, 2.0
+local COIN_MIN_PROFIT, COIN_THREE, COIN_TWO, COIN_THREE_MID = 1000, 10, 3, 20 -- Kennzahl on units per day
 function ns.MinMargin()
   local v = ns.db and ns.db.ui and ns.db.ui.productsMargin
   return (tonumber(v) or 30) / 100
@@ -581,7 +581,7 @@ function ns.Coins(profit, cost, demand)
   if not profit or profit <= 0 then return 0, false end
   local margin = (cost and cost > 0) and profit / cost or 10
   if margin < ns.MinMargin() then return 0, false end
-  local k = margin * (demand or 1)
+  local k = margin * (demand or 10)
   local n = k >= COIN_THREE and 3 or (k >= COIN_TWO and 2 or 1)
   if demand then
     local level = ns.Item.DemandText({ demand = demand })
@@ -589,7 +589,7 @@ function ns.Coins(profit, cost, demand)
     elseif level == "niedrig" or level == "kaum" then n = math.min(n, 2) end
   end
   if profit < COIN_MIN_PROFIT then n = 1 end
-  local grey = demand ~= nil and demand < ((ns.Item.DEMAND_LEVELS[#ns.Item.DEMAND_LEVELS] or {})[1] or 0.05)
+  local grey = demand ~= nil and demand < ((ns.Item.DEMAND_LEVELS[#ns.Item.DEMAND_LEVELS] or {})[1] or 1)
   return n, grey
 end
 function ns.CraftAttractive(e)

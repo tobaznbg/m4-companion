@@ -15,7 +15,7 @@ ns.AHTable.Add({
   -- Most demanded first: in thin markets one odd listing makes a "trend" of +5000 %.
   sort = "demand",
   views = { { "up", "Steigend" }, { "down", "Fallend" } },
-  defaultFilters = { demand = "1" },
+  defaultFilters = { demand = "10" },
   onOpen = function() if ns.AuctionScan then ns.AuctionScan.EnsureFresh() end end,
   columns = {
     { key = "name", title = "Item", width = 0, align = "LEFT" },

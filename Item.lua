@@ -15,8 +15,11 @@
 --   ref, refSource     R, THE reference price everywhere (selling, sniper, recipes, views):
 --                      med7 once it rests on 3 days, else medYesterday, else med7, else medToday; refSource "yesterday" /
 --                      "week" / "today" (Item.RefLabel). Same rule as the cloud (price_ref).
---   demand     relative demand from the cloud (scale: TSM's real EU sales per day; our own
---              estimate calibrated to it). Shown as a level, not as units: Item.DemandText
+--   demand     units bought per day, counted by the cloud itself over 7 days (commodities:
+--              estimated sales; items: only auctions that were the cheapest offer). Shown as a
+--              level: Item.DemandText (DEMAND_LEVELS)
+--   saturation share bought of the offers up to 5 % above the cheapest (cloud, 7 days), nil
+--              without enough: Item.SaturationText (unterversorgt / ausgeglichen / übersättigt)
 --   certain    units certainly bought per day (partial purchases of commodities, a lower
 --              bound; nil for items that are not commodities)
 --   change     now / medYesterday - 1 ("zu Median gestern")
@@ -125,7 +128,11 @@ function Item.Get(itemID)
   end
   e.dataT = bestT > 0 and bestT or nil
   if row then
-    e.demand, e.certain = row[18], row[19]
+    -- demand: units bought per day, own count of the cloud (field 25 since 24 Nov 2026); an
+    -- older collector file has only the old scale (field 18, a tenth of it)
+    e.demand = row[25] or (row[18] and row[18] * 10)
+    e.certain = row[19]
+    e.saturation = row[26]
     e.trend, e.direction = row[16], row[17]
     e.medToday, e.medTodayHours, e.medYesterday, e.med7, e.med7Days = row[20], row[21], row[22], row[23], row[24]
     -- A collector file from before the medians (fields 20-24 missing): its daily price of
@@ -350,8 +357,19 @@ function Item.TrendText(e)
   return string.format("%+d %% %s", pct, word)
 end
 
--- Demand levels (the cloud's demand scale).
-Item.DEMAND_LEVELS = { { 20, "sehr hoch" }, { 5, "hoch" }, { 1, "mittel" }, { 0.05, "niedrig" } }
+-- Demand levels, units bought per day.
+Item.DEMAND_LEVELS = { { 200, "sehr hoch" }, { 50, "hoch" }, { 10, "mittel" }, { 1, "niedrig" } }
+
+-- Saturation: are offers above the cheapest bought too? >= 50 %: unterversorgt, < 20 %:
+-- übersättigt (only the cheapest sells), between: ausgeglichen. Returns text, color; nil without.
+function Item.SaturationText(e)
+  local s = e and e.saturation
+  if not s then return nil end
+  local pct = math.floor(s * 100 + 0.5)
+  if s >= 0.5 then return "unterversorgt", pct, "|cff5fd38d" end
+  if s < 0.2 then return "übersättigt", pct, "|cffff6b6b" end
+  return "ausgeglichen", pct, "|cffffb547"
+end
 
 -- "hoch" etc. for views; nil without data.
 function Item.DemandText(e)

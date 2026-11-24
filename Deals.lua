@@ -15,9 +15,9 @@ Deals.DEFAULTS = {
   maxShare = 0.6,       -- offer at most 60 % of the reference
   maxPrice = 0,         -- maximum unit price and maximum R (median of yesterday) on the watch list; 0 means no limit
   minProfit = 2000,     -- 20 silver per item line after the 5 % cut
-  minDemand = 2,        -- ns.Item demand (cloud scale) for a hit
+  minDemand = 20,       -- ns.Item demand (units bought per day) for a hit
   watchMax = 150,       -- items on the watch list
-  watchMinDemand = 2,   -- ns.Item demand for the watch list
+  watchMinDemand = 20,  -- ns.Item demand for the watch list
   sellDays = 2,         -- price stair: what is bought must sell within this many days
   minGap = 0.15,        -- price stair: every bought level at least 15 % below the net resale price
   recipeWatch = true,   -- watch the tradeable recipes of ns.RecipeWatch as well (own category)
@@ -44,6 +44,13 @@ end
 
 function Deals.Settings()
   local s = ns.db and ns.db.settings and ns.db.settings.sniper or {}
+  -- demand values stored on the old scale (before 0.19, a tenth): once times 10
+  if ns.db and ns.db.settings and ns.db.settings.sniper and not s.demandScale10 then
+    for _, k in ipairs({ "minDemand", "watchMinDemand" }) do
+      if type(s[k]) == "number" then s[k] = s[k] * 10 end
+    end
+    s.demandScale10 = true
+  end
   local out = {}
   for k, v in pairs(Deals.DEFAULTS) do
     if s[k] ~= nil then out[k] = s[k] else out[k] = v end -- keeps a stored false

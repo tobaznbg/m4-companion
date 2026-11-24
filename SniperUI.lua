@@ -9,7 +9,7 @@ local GREEN, ORANGE, MUTED = "|cff5fd38d", "|cffffb547", "|cff99999e"
 
 local function money(c) return ns.FormatMoney(c or 0, true) end
 
-local DEMAND_STEPS = { { 0.05, "niedrig" }, { 1, "mittel" }, { 5, "hoch" }, { 20, "sehr hoch" } }
+local DEMAND_STEPS = { { 1, "niedrig" }, { 10, "mittel" }, { 50, "hoch" }, { 200, "sehr hoch" } } -- units per day
 -- Maximalpreis steps: no limit, 1g..25g by 1g, then by 2g up to 100g, then by 5g up to 5000g.
 local MAX_PRICE_STEPS = { 0 }
 do

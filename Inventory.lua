@@ -87,7 +87,7 @@ function Inventory.Advise(itemID, entry)
   end
   if ah and ah > vendor * AH_OVER_VENDOR and (ah - vendor) * (entry.n or 1) >= AH_MIN_GAIN then
     local reason = equipLoc and equipLoc ~= "" and "falls nicht getragen" or "AH bringt mehr"
-    if item.demand and item.demand < 0.05 then reason = "AH, aber kaum Käufer" end
+    if item.demand and item.demand < 1 then reason = "AH, aber kaum Käufer" end
     return "AH", reason, ah, vendor
   end
   if vendor > 0 then return "Händler", ah and "AH bringt kaum mehr" or "nicht im AH", vendor, vendor end

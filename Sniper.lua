@@ -371,9 +371,9 @@ local function evaluate(c, listings, commodity)
   -- Price stair (Deals.Staircase): what to buy, where to sell it again.
   local item = ns.Item(c.itemID)
   local cap, capLabel = item.ref or ref, item.ref and ns.Item.RefLabel(item) or source
-  -- The demand figure is on TSM's EU-wide scale, not units on this realm: without counted
-  -- sales assume at most one unit a day.
-  local perDay, perDaySource = item.demand and math.min(item.demand, 1), "vorsichtig geschätzt"
+  -- The demand is what all sellers together sell a day; our share of it is small: without
+  -- counted sales assume a tenth of it, at most one unit a day.
+  local perDay, perDaySource = item.demand and math.min(item.demand / 10, 1), "vorsichtig geschätzt"
   if item.certain and item.certain > 0 then perDay, perDaySource = item.certain, "sicher verkauft" end
   -- Falling price: no hit (the resale price would not hold).
   if ns.Deals.Falling(c.itemID) then return nil end
