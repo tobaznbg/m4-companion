@@ -783,6 +783,7 @@ end
 -- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
 Detail.FISH_DEPTH = 20
 local FISH_CUT, FISH_DEPOSIT = 0.05, 0.05
+local FISH_BAIT_LIFE = 2 * 3600 - 60 -- a bait gone earlier than its 2 h was taken
 
 function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
   local list = {}
@@ -1096,31 +1097,19 @@ do
       end
     end
     if b.catches == 0 and b.baits == 0 then return nil end
-    local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
-    local own
-    if ns.Profit and ns.Profit.UnitCost then
-      local ok, c = pcall(ns.Profit.UnitCost, id)
-      if ok and c and c > 0 then own = c end
-    end
-    own = own or market
-    b.own = own
-    local used = {}
+    -- counted live, from what the searches see (no waiting for the mails):
+    --   a bait set costs its deposit; gone from the auction house within its 2 h it was taken:
+    --   then it costs what it was below the own cost at setting (cost - price after the cut),
+    --   the deposit comes back; gone after 2 h it expired: the deposit stays lost
     for _, bait in ipairs(baits) do
-      for k, e in ipairs(events) do
-        if not used[k] and e.i == id and (e.u or 1) == 1 and (e.t or 0) >= bait.t then
-          if e.k == "sale" and math.abs((e.c or 0) - bait.p) <= 1 then
-            used[k] = true
-            b.sold = b.sold + 1
-            if own then b.baitCost = b.baitCost + math.max(0, own - bait.p * (1 - FISH_CUT)) end
-            break
-          elseif e.k == "expired" or e.k == "cancelled" then
-            used[k] = true
-            b.lost = b.lost + 1
-            b.baitCost = b.baitCost + (bait.dep or 0)
-            break
-          end
-        end
+      if bait.gone and bait.gone - bait.t < FISH_BAIT_LIFE then
+        b.sold = b.sold + 1
+        b.baitCost = b.baitCost + math.max(0, (bait.own or market or 0) - bait.p * (1 - FISH_CUT))
+      else
+        if bait.gone then b.lost = b.lost + 1 end
+        b.baitCost = b.baitCost + (bait.dep or 0)
       end
+      b.own = bait.own or b.own
     end
     b.worth = market and b.units * (market * (1 - FISH_CUT) - (dep or 0)) or nil
     b.result = b.worth and (b.worth - b.paid - b.baitCost) or nil
@@ -1280,7 +1269,13 @@ do
     if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then
       Fish.baitSent = GetTime()
       local log = Fish.DB().log
-      log[#log + 1] = { k = "bait", i = shownID, t = time(), p = plan.bait, dep = plan.dep or 0 }
+      local own
+      if ns.Profit and ns.Profit.UnitCost then
+        local okC, c = pcall(ns.Profit.UnitCost, shownID)
+        if okC and c and c > 0 then own = c end
+      end
+      -- own: the unit's cost when set (a later cheap buy must not change this bait's loss)
+      log[#log + 1] = { k = "bait", i = shownID, t = time(), p = plan.bait, dep = plan.dep or 0, own = own or plan.market }
     end
     Fish.Refresh()
   end
@@ -1375,6 +1370,22 @@ do
     -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
     local lies = plan and plan.baitLies or false
     if Fish.baitWas and Fish.baitWas.id == id and Fish.baitWas.lies and not lies then Fish.baitFlash = now + 3 end
+    -- a set bait that the search no longer shows as an own offer at its price has left the
+    -- auction house: taken (sold), or after 2 h expired - counted at once (an undercut bait is
+    -- still there: only its price counts, not whether it is in front)
+    if Fish.rows and Fish.rows.id == id then
+      local ownAt = {}
+      for _, r in ipairs(Fish.rows.list or {}) do
+        if (r.own or 0) > 0 then ownAt[r.unit] = true end
+      end
+      local log = Fish.DB().log
+      for _, e in ipairs(log) do
+        if e.k == "bait" and e.i == id and not e.gone then
+          if ownAt[e.p] then e.seen = true
+          elseif e.seen then e.gone = time() end
+        end
+      end
+    end
     Fish.baitWas = { id = id, lies = lies }
     local loc, have = Fish.BagSlot(id)
     local text = plan and plan.bait and ("Köder setzen (" .. money(plan.bait) .. ")") or "Köder setzen"
