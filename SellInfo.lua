@@ -819,17 +819,22 @@ local function attachAuctions()
       since = since + (dt or 0)
       if since < 0.2 then return end
       since = 0
-      if GetTime() - setT < 1.5 then return end
       local n = size(box)
       local ok, pct = pcall(box.GetScrollPercentage, box)
-      if ok and pct and n > 0 then lastPct, lastSize = pct, n end
+      if not (ok and pct and n > 0) then return end
+      -- a position away from the top is always the player's; the top only counts outside a refill
+      if pct > 0 or GetTime() - setT >= 1.5 then lastPct, lastSize = pct, n end
     end)
     hooksecurefunc(box, "SetDataProvider", function(b)
       setT = GetTime()
       local n = size(b)
       if n > 0 and lastPct > 0 and lastSize > 0 and math.abs(n - lastSize) <= 3 then
         local pct = lastPct
-        C_Timer.After(0, function() pcall(b.SetScrollPercentage, b, pct) end)
+        -- only when the refill really threw the list to the top (Blizzard often keeps the place)
+        C_Timer.After(0, function()
+          local ok, now = pcall(b.GetScrollPercentage, b)
+          if ok and now and now < 0.001 then pcall(b.SetScrollPercentage, b, pct) end
+        end)
       end
     end)
   end
