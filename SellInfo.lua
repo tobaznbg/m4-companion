@@ -320,7 +320,7 @@ end
 local BID_TEMPLATES = { AuctionHouseTableCellAllAuctionsBidTemplate = true, AuctionHouseTableCellAuctionsBidTemplate = true }
 local TEXT_TEMPLATE = "AuctionHouseTableCellTextTemplate"
 local OWN_WIDTH = 80
-local CANCEL_WIDTH = 80
+local CANCEL_WIDTH = 92
 SellInfo.columns = false -- true once the own columns are in the table
 
 -- Our columns sort by nothing: no arrow, no click (Blizzard's header would sort by the price).
@@ -581,8 +581,8 @@ local function checkFor(cell)
   if cell.m4Check then return cell.m4Check end
   local ok, c = pcall(CreateFrame, "CheckButton", nil, cell, "UICheckButtonTemplate")
   if not (ok and c) then return nil end
-  c:SetSize(18, 18)
-  c:SetPoint("LEFT", cell, "LEFT", 0, 0)
+  c:SetSize(16, 16)
+  c:SetPoint("LEFT", cell, "LEFT", -2, 0)
   c:SetScript("OnClick", function(self)
     local id = self.auctionID
     if not id then return end
@@ -613,6 +613,11 @@ local function updateAuctionRow(row)
     if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
     cellText(cells[2]):SetText(costText or "")
     cellText(cells[3]):SetText(profitText or "")
+    -- cells are pooled across the columns: a check box made in the Abbruch cell must not show
+    -- when that cell serves another column later
+    for k, cell in ipairs(cells) do
+      if k ~= 4 and type(cell) == "table" and cell.m4Check then cell.m4Check:Hide() end
+    end
     -- cancelling an active auction loses its deposit (a sale would give it back) plus what the
     -- game charges on top (GetCancelCost, 0 on Forever); the deposit from the logged posts
     if cells[4] then
@@ -624,7 +629,14 @@ local function updateAuctionRow(row)
         text = lost and (lost > 0 and ("|cffff6b6b-" .. ns.FormatMoney(lost, true) .. "|r") or "|cff999999frei|r") or "|cff999999?|r"
       end
       local fs = cellText(cells[4])
-      if fs.SetJustifyH then fs:SetJustifyH("RIGHT") end -- the check box sits left in the cell
+      -- right-aligned, starting after the check box
+      if fs.SetJustifyH then fs:SetJustifyH("RIGHT") end
+      if fs.ClearAllPoints and not cells[4].m4TextPlaced then
+        cells[4].m4TextPlaced = true
+        fs:ClearAllPoints()
+        fs:SetPoint("LEFT", cells[4], "LEFT", 16, 0)
+        fs:SetPoint("RIGHT", cells[4], "RIGHT", -4, 0)
+      end
       fs:SetText(text)
       local check = checkFor(cells[4])
       if check then
