@@ -974,11 +974,16 @@ local function buildGrouped(page, spec)
     if balance then
       for i, fs in ipairs(balance.values) do fs:SetText(data.balance[i] or "–") end
     end
-    local entries = { { key = "groups", header = spec.title } }
+    -- groups may bring their own headers (Bestand); else one header for all
+    local entries = (data.groups[1] and data.groups[1].header) and {} or { { key = "groups", header = spec.title } }
     all = {}
     for _, g in ipairs(data.groups) do
-      entries[#entries + 1] = { key = g.key, name = g.name, icon = g.icon, value = g.value, group = g }
-      for _, it in ipairs(g.items) do all[#all + 1] = it end
+      if g.header then
+        entries[#entries + 1] = { key = g.key, header = g.header }
+      else
+        entries[#entries + 1] = { key = g.key, name = g.name, icon = g.icon, value = g.value, group = g }
+        for _, it in ipairs(g.items) do all[#all + 1] = it end
+      end
     end
     split.SetEntries(entries)
   end
@@ -1037,16 +1042,16 @@ local function collectStock()
   local transit = P and P.Transit and P.Transit() or {}
   -- the area of an item exactly as in the ledger (Profit: product, material or loot of a
   -- household profession, else Handel / Eigenbedarf)
-  local areaOf = {}
+  local areaOf, kindOf = {}, {}
   for name, list in pairs(report.items or {}) do
     for _, r in ipairs(list) do
-      if not areaOf[r.itemId] or r.kind == "product" then areaOf[r.itemId] = shortGroup(name) end
+      if not areaOf[r.itemId] or r.kind == "product" then areaOf[r.itemId], kindOf[r.itemId] = shortGroup(name), r.kind end
     end
   end
-  local function group(key, name, icon)
+  local function group(key, name, icon, cat)
     local g = groups[key]
     if not g then
-      g = { key = key, name = name or key, items = {}, units = 0, cost = 0, sell = 0, gain = 0, icon = icon }
+      g = { key = key, name = name or key, items = {}, units = 0, cost = 0, sell = 0, gain = 0, icon = icon, cat = cat }
       groups[key] = g
       order[#order + 1] = g
     end
@@ -1081,18 +1086,23 @@ local function collectStock()
     local left = s.units
     local l, t = listed[s.itemId], transit[s.itemId]
     local nT = t and math.min(left, t.n) or 0
-    put(group("transit", "AH Transit", "Interface\\Icons\\INV_Letter_15"), s, nT,
+    put(group("transit", "Transit", "Interface\\Icons\\INV_Letter_15", "ah"), s, nT,
       nT > 0 and t.value * nT / t.n or nil, "verkauft – das Gold kommt mit der Post")
     left = left - nT
     local nA = l and math.min(left, l.n) or 0
-    put(group("auction", "Im AH", "Interface\\Icons\\INV_Hammer_15"), s, nA,
+    put(group("auction", "Lfd. Auktionen", "Interface\\Icons\\INV_Hammer_15", "ah"), s, nA,
       nA > 0 and l.value * nA / l.n or nil, "eingestellt – zum eigenen Preis nach Gebühr")
     if l and nA > 0 then l.placed = (l.placed or 0) + nA end
     left = left - nA
     if left > 0 then
       local maker = (s.source or ""):find("hergestellt") and ns.CraftedBy and ns.CraftedBy(s.itemId)
       local key = areaOf[s.itemId] or maker or ((s.source or ""):find("hergestellt") and "Hergestellt" or "Handel")
-      local g = group(key, key, key == "Handel" and AREA_ICONS.trade or PROFESSION_ICONS[key] or "Interface\\Icons\\INV_Box_02")
+      -- category: products and materials of a profession, the rest (Handel, Eigenbedarf, Beute)
+      local cat = "other"
+      if key ~= "Handel" and key ~= "Eigenbedarf" and key ~= "Beute" then
+        cat = (kindOf[s.itemId] == "product" or (not kindOf[s.itemId] and (maker or key == "Hergestellt"))) and "prod" or "mat"
+      end
+      local g = group(cat .. ":" .. key, key, key == "Handel" and AREA_ICONS.trade or PROFESSION_ICONS[key] or "Interface\\Icons\\INV_Box_02", cat)
       put(g, s, left, s.sellUnit and s.sellUnit * left or nil,
         heldBy(s.itemId) ~= "" and heldBy(s.itemId) or (key .. " · " .. (s.source or "")))
     end
@@ -1102,7 +1112,7 @@ local function collectStock()
   for id, l in pairs(listed) do
     local rest = l.n - (l.placed or 0)
     if rest > 0 then
-      put(group("auction", "Im AH", "Interface\\Icons\\INV_Hammer_15"),
+      put(group("auction", "Lfd. Auktionen", "Interface\\Icons\\INV_Hammer_15", "ah"),
         { itemId = id, units = rest, cost = 0, unitCost = 0, name = ns.ItemName and ns.ItemName(id) or nil },
         rest, l.value * rest / l.n, "eingestellt – Beute oder ohne bekannten Einkauf")
     end
@@ -1111,13 +1121,6 @@ local function collectStock()
   local kept = {}
   for _, g in ipairs(order) do if #g.items > 0 then kept[#kept + 1] = g end end
   order = kept
-  -- where it is first (in the mail, in the auction house), then the origins by book gain
-  local RANK = { transit = 1, auction = 2 }
-  table.sort(order, function(a, b)
-    local ra, rb = RANK[a.key] or 9, RANK[b.key] or 9
-    if ra ~= rb then return ra < rb end
-    return (a.worth or 0) > (b.worth or 0)
-  end)
   for _, g in ipairs(order) do
     table.sort(g.items, function(a, b) return a.gain > b.gain end)
     -- what the group is worth (AH Transit: the gold that comes with the mail)
@@ -1125,8 +1128,33 @@ local function collectStock()
     g.values = { string.format("%d Items · %d Stück", #g.items, g.units), money(g.cost), money(g.sell),
       pctText(g.gain, g.cost), signed(g.gain) }
   end
+  -- the list under headers: Gold (each character), Auktionshaus (Transit, Lfd. Auktionen),
+  -- Materialien and Produkte (each profession), Sonstiges (Handel, Eigenbedarf, …)
   local gold = collectGold and collectGold()
-  if gold then table.insert(order, 1, gold) end
+  local out = {}
+  if gold then
+    out[#out + 1] = { header = "Gold", key = "h:gold" }
+    for _, it in ipairs(gold.items) do
+      out[#out + 1] = { key = it.key, name = it.name, icon = it.icon, value = it.cols[3], items = {},
+        labels = it.labels, values = it.values }
+    end
+  end
+  local function section(cat, title, first)
+    local list = {}
+    for _, g in ipairs(order) do if g.cat == cat then list[#list + 1] = g end end
+    if #list == 0 then return end
+    table.sort(list, function(a, b)
+      if first and (a.key == first) ~= (b.key == first) then return a.key == first end
+      return (a.worth or 0) > (b.worth or 0)
+    end)
+    out[#out + 1] = { header = title, key = "h:" .. cat }
+    for _, g in ipairs(list) do out[#out + 1] = g end
+  end
+  section("ah", "Auktionshaus", "transit")
+  section("mat", "Materialien")
+  section("prod", "Produkte")
+  section("other", "Sonstiges")
+  order = out
   local cash = gold and gold.total or 0
   local transit = total.transit or 0
   local worth = total.worth or 0
