@@ -139,7 +139,7 @@ local function refresh()
       end
     end
     table.sort(buys, function(a, b) return a.profit > b.profit end)
-    add({ head = string.format("Kaufen %s%s|r", MUTED, money(CAPITAL)) })
+    add({ head = string.format("Kaufen %s%dg|r", MUTED, math.floor(CAPITAL / 10000)) })
     if #buys == 0 then add({ text = MUTED .. "–|r" }) end
     for i = 1, math.min(#buys, MAX_LINES) do
       local b = buys[i]
