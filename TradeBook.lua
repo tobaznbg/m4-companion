@@ -1018,7 +1018,7 @@ local function collectStock()
   local report = P and P.Report and P.Report(nil) or { stock = {} }
   local groups, order = {}, {}
   local total = { cost = 0, sell = 0, gain = 0, units = 0 }
-  -- where the units are: running auctions of the household ("Im Auktionshaus", at the listed
+  -- where the units are: running auctions of the household ("Im AH", at the listed
   -- price after the cut), sold with the mail still to come ("Unterwegs", Profit.Transit), the
   -- rest by origin (a profession, Hergestellt, Handel)
   local listed = {}
@@ -1064,11 +1064,11 @@ local function collectStock()
     local left = s.units
     local l, t = listed[s.itemId], transit[s.itemId]
     local nT = t and math.min(left, t.n) or 0
-    put(group("transit", "Unterwegs (verkauft, Post kommt)", "Interface\\Icons\\INV_Letter_15"), s, nT,
+    put(group("transit", "AH Transit", "Interface\\Icons\\INV_Letter_15"), s, nT,
       nT > 0 and t.value * nT / t.n or nil, "verkauft – das Gold kommt mit der Post")
     left = left - nT
     local nA = l and math.min(left, l.n) or 0
-    put(group("auction", "Im Auktionshaus", "Interface\\Icons\\INV_Hammer_15"), s, nA,
+    put(group("auction", "Im AH", "Interface\\Icons\\INV_Hammer_15"), s, nA,
       nA > 0 and l.value * nA / l.n or nil, "eingestellt – zum eigenen Preis nach Gebühr")
     left = left - nA
     if left > 0 then
