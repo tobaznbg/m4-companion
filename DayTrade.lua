@@ -114,6 +114,31 @@ function Trade.Plan(s, capital)
   return qty, cost, qty * net - cost, true, o.cheapest
 end
 
+-- Own cost per unit (ledger cost plus lost deposits), cached for every item together: the
+-- overlay redraws every 15 s and on every live message, and Profit.UnitCost replays the whole
+-- ledger once its own 5 s cache ran out - that replay froze the game periodically. Recomputed
+-- only when the ledger got a new event, or after OWN_TTL for in-place changes.
+local OWN_TTL = 300
+local ownCache, ownKey, ownAt = {}, nil, 0
+local function ownCost(itemID)
+  local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
+  local key = tostring(events) .. ":" .. #events .. ":" .. tostring(events[#events])
+  local t = GetTime and GetTime() or time()
+  if key ~= ownKey or t - ownAt > OWN_TTL then ownCache, ownKey, ownAt = {}, key, t end
+  local c = ownCache[itemID]
+  if c == nil then
+    c = false
+    local ok, cost, src = pcall(ns.Profit.UnitCost, itemID)
+    if ok and cost then
+      local okL, lost = pcall(ns.Profit.LostDepositPerUnit, itemID)
+      c = { cost + (okL and lost or 0), src }
+    end
+    ownCache[itemID] = c
+  end
+  if c then return c[1], c[2] end
+end
+function Trade.InvalidateOwn() ownCache = {} end
+
 -- The state of one pool item now: { phase = "buy"|"sell"|"wait", text, color, … }.
 local function state(itemID, r)
   local buyHour, sellHour, limit, ask, maxQty, profitDay, avail = r[1], r[2], r[3], r[4], r[5], r[6], r[7]
@@ -126,13 +151,7 @@ local function state(itemID, r)
   -- it); the floor is then "no loss": cost and deposit back after the cut. Without stock (or
   -- without a cost) the floor is the one of the buy limit.
   local own, ownSource
-  if held > 0 and ns.Profit and ns.Profit.UnitCost then
-    local ok, c, src = pcall(ns.Profit.UnitCost, itemID)
-    if ok and c then
-      local okL, lost = pcall(ns.Profit.LostDepositPerUnit, itemID)
-      own, ownSource = c + (okL and lost or 0), src
-    end
-  end
+  if held > 0 and ns.Profit and ns.Profit.UnitCost then own, ownSource = ownCost(itemID) end
   local floor = math.ceil(((own or limit) + dep) / (1 - CUT))
   local s = { itemID = itemID, buyHour = buyHour, sellHour = sellHour, limit = limit, ask = ask, maxQty = maxQty,
     profitDay = profitDay, avail = avail, offer = o, held = held, dep = dep, floor = floor, own = own,

@@ -515,7 +515,10 @@ local function replayAll()
   return unpack(cached)
 end
 
-function Profit.Invalidate() cached = nil end
+function Profit.Invalidate()
+  cached = nil
+  if ns.DayTrade and ns.DayTrade.InvalidateOwn then ns.DayTrade.InvalidateOwn() end
+end
 
 -- Per item rows: crafted items under their profession (stock = crafted pool), TRADE rows
 -- for bought items that were sold, came back or are still there (stock = bought pool, also
