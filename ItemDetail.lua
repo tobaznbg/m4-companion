@@ -766,7 +766,7 @@ end
 do
   local NAME = "M4CompanionPriceChart"
   local W, H = 900, 520
-  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 80, 34 -- plot margins in the page
+  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 74, 34 -- plot margins in the page
   local RANGES = {
     { key = "live", span = 20 * 60, button = "Live", label = "20 min" },
     { key = "today", today = true, button = "Heute", label = "heute" },
@@ -1004,14 +1004,14 @@ do
     ui.name:SetPoint("RIGHT", page, "RIGHT", -400, 0) -- the range buttons are right of it
     ui.name:SetJustifyH("LEFT")
     ui.stats = label(page, "GameFontHighlightSmall")
-    ui.stats:SetPoint("TOPLEFT", ui.name, "BOTTOMLEFT", 0, -5)
+    ui.stats:SetPoint("TOPLEFT", ui.name, "BOTTOMLEFT", 0, -7)
     ui.stats:SetPoint("RIGHT", page, "RIGHT", -6, 0)
     ui.stats:SetJustifyH("LEFT")
     ui.legend = label(page, "GameFontHighlightSmall")
     ui.legend:SetPoint("TOPLEFT", page, "TOPLEFT", LEFT, -62)
     -- the live figures of the last hour, under the stats
     ui.live = label(page, "GameFontHighlightSmall")
-    ui.live:SetPoint("TOPLEFT", ui.stats, "BOTTOMLEFT", 0, -4)
+    ui.live:SetPoint("TOPLEFT", ui.stats, "BOTTOMLEFT", 0, -6)
     ui.live:SetPoint("RIGHT", page, "RIGHT", -6, 0)
     ui.live:SetJustifyH("LEFT")
     ui.legend:SetJustifyH("LEFT")
@@ -1175,8 +1175,8 @@ do
   end
 
   -- The head: name, the range's figures, how old "jetzt" is and where it is from.
-  -- Live figures from the fine points of the last hour (own searches, live channel): supply now
-  -- and its change per hour, units gone (bought or taken back) and new, the price's change.
+  -- Live figure from the fine points of the last hour (own searches, live channel): how the
+  -- supply changes per hour - shrinking, growing or stable.
   local LIVE_WINDOW = 3600
   local function liveText(id)
     local G, M = "|cffffd100", ns.Style.MUTED
@@ -1188,26 +1188,13 @@ do
       return G .. "Live 60 min|r  " .. M .. "zu wenig Live-Daten – AH öffnen, das Fenster sucht dann jede Sekunde|r"
     end
     local first, last = pts[1], pts[#pts]
-    local gone, new = 0, 0
-    for k = 2, #pts do
-      local d = pts[k].q - pts[k - 1].q
-      if d < 0 then gone = gone - d else new = new + d end
-    end
     local hours = (last.t - first.t) / 3600
     local rate = (last.q - first.q) / hours
     local share = last.q > 0 and rate / last.q or 0
     local trend = share <= -0.05 and "|cff5fd38dschwindet|r" or share >= 0.05 and "|cffff6b6bwächst|r" or (M .. "stabil|r")
-    local parts = { string.format("%sAngebot|r %s Stück  %s%s/h %s", G, count(last.q), rate >= 0 and "+" or "−",
-      count(math.floor(math.abs(rate) + 0.5)), trend) }
-    parts[#parts + 1] = G .. "weg|r " .. count(gone)
-    parts[#parts + 1] = G .. "neu|r " .. count(new)
-    if first.p > 0 and last.p > 0 then
-      local d = last.p / first.p - 1
-      parts[#parts + 1] = string.format("%sPreis|r %s%+d %%|r", G, d > 0.005 and "|cff5fd38d" or d < -0.005 and "|cffff6b6b" or M,
-        math.floor(d * 100 + (d >= 0 and 0.5 or -0.5)))
-    end
-    return string.format("%sLive %d min|r  ", G, math.max(5, math.floor((last.t - first.t) / 60 + 0.5)))
-      .. table.concat(parts, M .. "  ·  |r")
+    -- only the trend: the quantity itself is in the line above ("jetzt … Stück")
+    return string.format("%sLive %d min|r   %sAngebot|r %s%s/h %s", G, math.max(5, math.floor((last.t - first.t) / 60 + 0.5)),
+      G, rate >= 0 and "+" or "−", count(math.floor(math.abs(rate) + 0.5)), trend)
   end
 
   local function drawHead(id, e, values, rng)
@@ -1299,7 +1286,7 @@ do
       legend = legend .. string.format("   |cff5fd38dKauf bis / Kaufzeit %d–%d Uhr|r   |cff73adffZiel / Verkaufszeit %d–%d Uhr|r",
         r[1], (r[1] + (ns.DayTrade.WINDOW_HOURS or 3)) % 24, r[2], (r[2] + (ns.DayTrade.WINDOW_HOURS or 3)) % 24)
     end
-    ui.legend:SetText(legend)
+    ui.legend:SetText("") -- the lines explain themselves (labels on the right, tooltip on hover)
     ui.res:SetText(series and (series.hourFrom and ("1-h-Werte ab " .. stampFull(series.hourFrom) .. ", davor 2 h") or "2-h-Werte") or "")
     drawAxis(v)
     drawBands(v)
