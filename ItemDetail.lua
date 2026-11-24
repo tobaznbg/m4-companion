@@ -1231,6 +1231,11 @@ do
     if missed then
       Fish.missed = (Fish.missed or 0) + 1
       Fish.cooldown = GetTime() + 1
+      -- the rows that showed the catch are stale now (it is gone): forget them and search at
+      -- once - else every click would ask for the same sold offer again
+      Fish.rows = nil
+      Fish.stale = GetTime()
+      if p and ns.AHSearch and ns.AHSearch.Request then ns.Safe(ns.AHSearch.Request, p.itemID, nil, true) end
     else
       Fish.cooldown = GetTime() + COOLDOWN
       if reason then Fish.Note(reason) end
@@ -1456,6 +1461,8 @@ do
       else
         look(ui.fishBtn, false, false, "Kauf läuft …", nil)
       end
+    elseif Fish.stale and not (Fish.rows and Fish.rows.id == id) then
+      look(ui.fishBtn, false, false, "Prüfe Angebot …", "Neue Suche nach einem verpassten Fang")
     elseif not open then
       look(ui.fishBtn, false, false, "Fischen", "nur am Auktionshaus")
     elseif combat then
@@ -1508,6 +1515,7 @@ do
     local api = C_AuctionHouse
     if not (itemID and itemID == shownID and api and api.GetNumCommoditySearchResults) then return end
     Fish.rows = { id = itemID, list = readRows(itemID) }
+    Fish.stale = nil
     Fish.stat.results, Fish.stat.lastResults = Fish.stat.results + 1, GetTime()
     if not live() then return end
     local plan = Fish.Plan(itemID)
