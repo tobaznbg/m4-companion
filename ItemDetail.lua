@@ -1130,6 +1130,44 @@ do
     ns.Safe(draw)
   end
 
+  -- The own unit cost (ledger replay: expensive) at most every 30 s per item.
+  local costCache = {}
+  function Fish.OwnCost(id)
+    local c = costCache[id]
+    if c and GetTime() - c.t < 30 then return c.v end
+    local v
+    if ns.Profit and ns.Profit.UnitCost then
+      local ok, x = pcall(ns.Profit.UnitCost, id)
+      if ok and x and x > 0 then v = x end
+    end
+    costCache[id] = { v = v, t = GetTime() }
+    return v
+  end
+
+  -- Diagnostics for "/m4 fisch": counters of what happened this session.
+  Fish.stat = { results = 0, asks = 0, autoAsks = 0, quotes = 0, buys = 0, misses = 0 }
+
+  -- "/m4 fisch": what the fishing sees and did (for finding out why nothing is bought)
+  function Detail.FishStatus()
+    local P, st = "|cffffd100M4 Fischen:|r ", Fish.stat
+    print(P .. string.format("Live-Ansicht %s, AH %s, Fischmodus %s, Item %s", live() and "ja" or "nein",
+      ahOpen() and "offen" or "zu", ns.FishMode and ns.FishMode() and "an" or "aus", shownID and (ns.ItemName(shownID) or shownID) or "–"))
+    print(string.format("  Suchergebnisse: %d (letztes vor %s s) · Preisanfragen: %d (davon automatisch %d) · Antworten: %d · gekauft: %d · verpasst: %d",
+      st.results, st.lastResults and string.format("%.1f", GetTime() - st.lastResults) or "–", st.asks, st.autoAsks, st.quotes, st.buys, st.misses))
+    local plan = shownID and Fish.Plan(shownID)
+    if plan then
+      print(string.format("  Markt %s · Fang bis %s · Köder %s (%s) · Fang: %d fremde Stück, kaufbar %d für %s",
+        plan.market and money(plan.market) or "–", plan.limit and money(plan.limit) or "–", plan.bait and money(plan.bait) or "–",
+        plan.baitLies and "liegt" or "liegt nicht", plan.catch or 0, plan.n or 0, money(plan.sum or 0)))
+    else
+      print("  kein Plan (noch keine Suche des Items oder kein Markt)")
+    end
+    local p = Fish.pending
+    print(string.format("  Anfrage: %s · automatisch gesperrt: %s · Pause noch %.1f s · letzte Antwort: %s",
+      p and (p.state .. " " .. p.n .. " Stück") or "keine", Fish.autoBlocked and "ja (2 Klicks)" or "nein",
+      math.max(0, (Fish.cooldown or 0) - GetTime()), st.lastQuote or "–"))
+  end
+
   function Fish.Plan(id)
     local rows = Fish.rows
     if not (id and rows and rows.id == id) then return nil end
@@ -1208,6 +1246,7 @@ do
     local p = { itemID = shownID, n = plan.n, sum = plan.sum, limit = plan.limit, bite = plan.baitLies,
       state = "asking", t = GetTime(), auto = auto }
     Fish.pending = p
+    Fish.stat.asks = Fish.stat.asks + 1
     Fish.asking = true -- our own call: the hook below must not take it for Blizzard's dialog
     local ok = pcall(api.StartCommoditiesPurchase, p.itemID, p.n)
     Fish.asking = false
@@ -1269,11 +1308,7 @@ do
     if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then
       Fish.baitSent = GetTime()
       local log = Fish.DB().log
-      local own
-      if ns.Profit and ns.Profit.UnitCost then
-        local okC, c = pcall(ns.Profit.UnitCost, shownID)
-        if okC and c and c > 0 then own = c end
-      end
+      local own = Fish.OwnCost(shownID)
       -- own: the unit's cost when set (a later cheap buy must not change this bait's loss)
       log[#log + 1] = { k = "bait", i = shownID, t = time(), p = plan.bait, dep = plan.dep or 0, own = own or plan.market }
     end
@@ -1443,11 +1478,7 @@ do
       look(ui.fishBtn, false, false, "Köder-Stück gerade gesperrt", nil)
     else
       -- what the bait costs when someone takes it: own cost minus what it brings after the cut
-      local own
-      if ns.Profit and ns.Profit.UnitCost then
-        local ok, c = pcall(ns.Profit.UnitCost, id)
-        if ok and c and c > 0 then own = c end
-      end
+      local own = Fish.OwnCost(id)
       local loss = own and (own - plan.bait * (1 - FISH_CUT)) or nil
       look(ui.fishBtn, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, "Köder setzen (" .. money(plan.bait) .. ")",
         "1 Stück zu " .. money(plan.bait) .. " für 2 h einstellen (Gebühr etwa " .. money(plan.dep or 0) .. ")"
@@ -1476,6 +1507,7 @@ do
     local api = C_AuctionHouse
     if not (itemID and itemID == shownID and api and api.GetNumCommoditySearchResults) then return end
     Fish.rows = { id = itemID, list = readRows(itemID) }
+    Fish.stat.results, Fish.stat.lastResults = Fish.stat.results + 1, GetTime()
     if not live() then return end
     local plan = Fish.Plan(itemID)
     local fang = plan and plan.n > 0 or false
@@ -1492,6 +1524,7 @@ do
       local key = itemID .. ":" .. plan.n .. ":" .. plan.sum
       if key ~= Fish.autoKey then
         Fish.autoKey = key
+        Fish.stat.autoAsks = Fish.stat.autoAsks + 1
         Fish.Ask(plan, true)
       end
     end
@@ -1504,10 +1537,13 @@ do
       local p = Fish.pending
       if not (p and p.state == "asking") then return end -- not ours: Blizzard's buy dialog
       total = tonumber(total)
+      Fish.stat.quotes = Fish.stat.quotes + 1
+      Fish.stat.lastQuote = string.format("%s für %d (Plan %s)", total and money(total) or "?", p.n, money(p.sum))
       local why
       if not total then
         why = "kein Preis erhalten"
       elseif total > p.sum * 1.01 then
+        Fish.stat.misses = Fish.stat.misses + 1
         return Fish.Drop(true, nil, true) -- someone bought the cheap ones first
       elseif total > p.n * p.limit then
         why = "über der Fanggrenze: " .. money(total) .. " für " .. p.n .. " Stück"
@@ -1531,6 +1567,7 @@ do
       local p = Fish.pending
       if not (p and p.state == "buying") then return end
       Fish.pending = nil
+      Fish.stat.buys = Fish.stat.buys + 1
       local db = Fish.DB()
       db.spent = db.spent + (p.total or 0) -- the ledger books the buy itself (Ledger.lua hooks)
       db.log[#db.log + 1] = { k = "catch", i = p.itemID, t = time(), n = p.n, c = p.total or 0 }

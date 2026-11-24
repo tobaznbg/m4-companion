@@ -249,6 +249,9 @@ SlashCmdList.M4COMPANION = function(msg)
     if not (ns.TradeBook and ns.TradeBook.ShowBoxenstopp()) then
       print("|cffffd100M4:|r Der Boxenstopp-Planer ist aus: Einstellungen → Min-Max-Optimierung.")
     end
+  elseif msg == "fisch" or msg == "fischen" then
+    -- /m4 fisch: state of the fishing in the chart window (diagnostics)
+    if ns.ItemDetail and ns.ItemDetail.FishStatus then ns.Safe(ns.ItemDetail.FishStatus) end
   elseif cmd and cmd:lower() == "spur" then
     -- /m4 spur <item>: trace the item's front offers with their sellers (local, see Observations.lua)
     local id, err = ns.ItemDetail.Resolve(rest)
