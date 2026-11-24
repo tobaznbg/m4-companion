@@ -119,9 +119,9 @@ local function state(itemID, r)
     s.phase = "buy"
     if o.cheapest and o.cheapest <= limit then
       -- the profit the capital would bring now (sorts the group, see entries)
-      local qty, _, profit, approx = Trade.Plan(s)
+      local qty, _, profit = Trade.Plan(s)
       s.profit = qty > 0 and profit or 0
-      s.text = (approx and "~" or "") .. (s.profit >= 0 and "+" or "") .. money(s.profit)
+      s.text = (s.profit >= 0 and "+" or "") .. money(s.profit)
       s.color = s.profit > 0 and GREEN or MUTED
     elseif o.cheapest then
       s.text, s.color = "zu teuer", RED
@@ -149,7 +149,7 @@ local function state(itemID, r)
     -- weighted with how often the rhythm held) for the units the capital buys at the limit
     local qty = math.min(maxQty, math.floor(CAPITAL / math.max(limit, 1)))
     s.profit = maxQty > 0 and qty * profitDay / maxQty or 0
-    s.text, s.color = string.format("~+%s · %d Uhr", money(s.profit), buyHour), MUTED
+    s.text, s.color = string.format("+%s · %d Uhr", money(s.profit), buyHour), MUTED
   end
   return s
 end
@@ -278,8 +278,8 @@ local function entries()
     local list = byPhase[g[1]]
     if #list > 0 then
       table.sort(list, function(a, b)
-        -- buy now: the best profit with the capital first, the too expensive ones last
-        if g[1] == "buy" and (a.profit or -math.huge) ~= (b.profit or -math.huge) then
+        -- buy now and later: the best profit with the capital first
+        if (g[1] == "buy" or g[1] == "wait") and (a.profit or -math.huge) ~= (b.profit or -math.huge) then
           return (a.profit or -math.huge) > (b.profit or -math.huge)
         end
         if (a.wait or 0) ~= (b.wait or 0) then return (a.wait or 0) < (b.wait or 0) end

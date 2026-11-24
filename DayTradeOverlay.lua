@@ -118,7 +118,7 @@ local function refresh()
     for i = 1, math.min(#buys, MAX_LINES) do
       local b = buys[i]
       add({ itemID = b.s.itemID, text = ns.ItemName(b.s.itemID) or ("Item " .. b.s.itemID),
-        right = string.format("%s%s+%s|r", GREEN, b.approx and "~" or "", money(b.profit)),
+        right = string.format("%s+%s|r", GREEN, money(b.profit)),
         tip = string.format("Kaufen: %d Stück für %s (Grenze %s je Stück).\nEinstellen %s zu %s je Stück: erwartet +%s nach Gebühr und Einstellgebühr.",
           b.qty, money(b.cost), money(b.s.limit), string.format("%d–%d Uhr", b.s.sellHour, (b.s.sellHour + 3) % 24),
           money(b.s.ask), money(b.profit)) })
