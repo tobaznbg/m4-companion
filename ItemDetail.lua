@@ -2850,7 +2850,15 @@ local function renderBody()
   if now and item.medYesterday and item.med7 and now < item.medYesterday and now < item.med7 then
     nowText = "|cffff6b6b" .. nowText .. "|r"
   end
-  line("AH jetzt", nowText)
+  -- the label says how old that price is: the search on opening, else the newest source
+  local nowT = (fresh and fresh.state == "done") and fresh.t or item.dataT
+  -- green under 5 min, yellow up to 70 min, red beyond
+  local ageColor
+  if nowT then
+    local age = time() - nowT
+    ageColor = age < 300 and "|cff4cd964" or age <= 4200 and "|cffffff40" or "|cffff6b6b"
+  end
+  line("AH" .. (nowT and ("  " .. ageColor .. ago(nowT) .. "|r") or ""), nowText)
   line("Marktwert heute", item.medToday and money(item.medToday) or "–")
   line("Marktwert gestern", item.medYesterday and money(item.medYesterday) or "–")
   line("Marktwert 7 Tage", item.med7 and money(item.med7) or "–")
