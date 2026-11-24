@@ -179,7 +179,7 @@ Trade.CUT, Trade.Ago, Trade.CAPITAL = CUT, ago, CAPITAL
 -- Card -------------------------------------------------------------------------------------
 
 -- The card shows what the item brings NOW, by its state: the labels change with it (ROWS rows).
-local ROWS = 6
+local ROWS = 8 -- up to 6 rows of the state, then demand and saturation
 
 local function card(c)
   local NW = ns.NativeWindow
@@ -284,6 +284,22 @@ local function show(entry, c)
   v.Icon:SetTexture((C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(s.itemID)) or 134400)
   v.Name:SetText(ns.ItemName(s.itemID) or ("Item " .. s.itemID))
   v.Sub:SetText(ns.AuctionHouse.Name())
+  -- demand and saturation (cloud): why the item is in the pool, and whether that still holds
+  local e = ns.Item.Get(s.itemID)
+  local sat, _, satColor = ns.Item.SaturationText(e)
+  local extra = {
+    { "Nachfrage", ns.Item.DemandColored(e) or (MUTED .. "unbekannt|r") },
+    { "Sättigung", sat and (satColor .. sat .. "|r") or (MUTED .. "unbekannt|r") },
+  }
+  local n = 0
+  for i = 1, ROWS do if v.fig.labels[i]:IsShown() then n = i end end
+  for k, r in ipairs(extra) do
+    local i = n + k
+    if i <= ROWS then
+      v.fig.labels[i]:SetText(r[1]); v.fig.values[i]:SetText(r[2])
+      v.fig.labels[i]:Show(); v.fig.values[i]:Show()
+    end
+  end
   v.Advice:SetText(advice)
   v.Note:SetText(string.format("Gerechnet mit %dg Kapital, die günstigsten Angebote zuerst. Gebühr 5 %%, "
     .. "Einstellgebühr 2 h %s je Stück.", math.floor(CAPITAL / 10000), money(s.dep)))
