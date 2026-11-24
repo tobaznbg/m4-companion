@@ -1345,14 +1345,15 @@ do
     local plan = Fish.Plan(shownID)
     local K = Fish.BaitPrice(shownID, plan)
     if not K then return Fish.Refresh() end
-    local kind, info = Fish.State(shownID, K)
+    local kind, info, L = Fish.State(shownID, K)
     if kind == "catch" then
-      Fish.Dbg(string.format("3 Kauf angefragt: %d Stück bis %s je Stück", info, money(K)))
-      Fish.Ask({ n = info, sum = info * K, limit = K, blind = true }, false)
+      Fish.Dbg(string.format("3 Kauf angefragt: %d Stück bis %s je Stück", info, money(L)))
+      Fish.Ask({ n = info, sum = info * L, limit = L, blind = true }, false)
     elseif kind == "bait" then
       local before = Fish.baitSent
       ns.Safe(Fish.Bait, K)
       if Fish.baitSent and Fish.baitSent ~= before then
+        Fish.baitK = { id = shownID, k = K } -- the buy limit until the next bait
         Fish.Dbg("1 Köder gesetzt: 1 × " .. money(K) .. " – warte auf „Auktion erstellt“, dann Suche")
         Fish.AwaitBait()
       else
@@ -1401,7 +1402,13 @@ do
   --   "lies", own  nothing fits, our bait is still there
   --   "bait"       nothing fits, no bait of ours -> set one
   --   "wait", why  no fresh search yet / budget used up / bait switched off
+  -- The buy limit is the price of the bait we set last (not the price a new bait would get:
+  -- that one sits under the cheapest foreign offer, so a fresh undercut would never fit).
+  function Fish.Limit(id, K)
+    return Fish.baitK and Fish.baitK.id == id and Fish.baitK.k or K
+  end
   function Fish.State(id, K)
+    K = Fish.Limit(id, K)
     local rows = Fish.rows
     -- also received at least 0.5 s later: an answer to a search sent just before (0.1-0.3 s,
     -- measured) must not pass for the new one
@@ -1420,7 +1427,7 @@ do
     end
     local left = Fish.Cfg(id).budget - Fish.DB().spent
     if math.floor(left / K) < 1 then return "wait", "Tagesbudget aufgebraucht" end
-    if big then return "catch", math.min(n, math.floor(left / K)) end
+    if big then return "catch", math.min(n, math.floor(left / K)), K end
     if own > 0 then return "lies", own end
     if Fish.noBait then return "wait", "kein Angebot > 1 Stück bis " .. money(K) .. " (Köder aus)" end
     return "bait"
@@ -1608,9 +1615,10 @@ do
         look(ui.fishBtn, false, false, note or "kein Köderpreis (Händlerpreis unbekannt)", nil)
       else
         local kind, info = Fish.State(id, K)
+        local L = Fish.Limit(id, K)
         local last = Fish.lastAnswer and (" · zuletzt " .. money(Fish.lastAnswer) .. " zu teuer") or ""
         if kind == "catch" then
-          look(ui.fishBtn, true, true, string.format("3 Kaufen: %d Stück bis ", info) .. money(K), nil)
+          look(ui.fishBtn, true, true, string.format("3 Kaufen: %d Stück bis ", info) .. money(L), nil)
           ui.fishBtn.blink = true
         elseif kind == "bait" then
           if have == 0 then
@@ -1621,7 +1629,7 @@ do
             look(ui.fishBtn, true, false, "1 Köder setzen (" .. money(K) .. ")" .. last, nil)
           end
         elseif kind == "lies" then
-          look(ui.fishBtn, true, false, note or ("2 Köder liegt – warte auf Angebot bis " .. money(K) .. last), nil)
+          look(ui.fishBtn, true, false, note or ("2 Köder liegt – warte auf Angebot bis " .. money(L) .. last), nil)
         else
           look(ui.fishBtn, true, false, note or ("2 " .. tostring(info) .. last), nil)
         end
@@ -1657,13 +1665,14 @@ do
       local K = Fish.BaitPrice(itemID, Fish.Plan(itemID))
       if K then
         local kind, info = Fish.State(itemID, K)
+        local L = Fish.Limit(itemID, K)
         local own = 0
         for _, r in ipairs(Fish.rows.list) do own = own + (r.own or 0) end
         local r1 = Fish.rows.list[1]
         local key = kind .. ":" .. tostring(info) .. ":" .. own
         if key ~= Fish.stateKey then
           Fish.stateKey = key
-          local what = kind == "catch" and string.format("|cff5fd38dpasst: %d Stück bis %s → 3 Kaufen klicken|r", info, money(K))
+          local what = kind == "catch" and string.format("|cff5fd38dpasst: %d Stück bis %s → 3 Kaufen klicken|r", info, money(L))
             or kind == "lies" and "nichts passt, unser Köder liegt noch → warten"
             or kind == "bait" and "nichts passt, kein Köder von uns → 1 neuer Köder"
             or tostring(info)
