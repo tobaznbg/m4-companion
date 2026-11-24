@@ -38,18 +38,30 @@ local function learnInfo(professionID, recipeID)
   return text, d[5] or d[1]
 end
 
+-- The item index of a scan, built once per scan table: a new scan (Recipes.lua) or a synced one
+-- (Sync.lua) is always a new table, so the index never goes stale. The ledger replay asks
+-- CraftedBy for every sale - rebuilding the index on each call made every replay slow.
+local byItemOf = setmetatable({}, { __mode = "k" })
+local function scanIndex(scan)
+  local byItem = byItemOf[scan]
+  if not byItem then
+    byItem = {}
+    for recipeID, r in pairs(scan.recipes or {}) do
+      -- Several recipes can make the same item: a learned one wins.
+      if r.out and (not byItem[r.out] or r.learned) then byItem[r.out] = { id = recipeID, r = r } end
+    end
+    byItemOf[scan] = byItem
+  end
+  return byItem
+end
+
 -- A character's profession scans (default: the own one): professionID -> { scan, byItem =
 -- { [craftedItemID] = { recipeID (spell), recipe } } } (learned state and skill come from the game).
 local function ownScans(charKey)
   local own, prefix = {}, (charKey or ns.CharKey()) .. ":"
   for key, scan in pairs(ns.db.recipes or {}) do
     if key:sub(1, #prefix) == prefix and scan.professionID then
-      local byItem = {}
-      for recipeID, r in pairs(scan.recipes or {}) do
-        -- Several recipes can make the same item: a learned one wins.
-        if r.out and (not byItem[r.out] or r.learned) then byItem[r.out] = { id = recipeID, r = r } end
-      end
-      own[scan.professionID] = { scan = scan, byItem = byItem }
+      own[scan.professionID] = { scan = scan, byItem = scanIndex(scan) }
     end
   end
   return own

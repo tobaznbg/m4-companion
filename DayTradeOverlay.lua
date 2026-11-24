@@ -228,5 +228,17 @@ ns.OnReady(function()
   if ns.Obs and ns.Obs.OnRecord then ns.Obs.OnRecord(function() C_Timer.After(0, Overlay.Refresh) end) end
   if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(Overlay.Refresh) end
   ns.AuctionHouse.OnChange(Overlay.Refresh)
-  if ns.Live then ns.Live.OnUpdate(Overlay.Refresh) end
+  -- other players' prices arrive up to once a second: the box follows every LIVE_EVERY seconds
+  if ns.Live then
+    local LIVE_EVERY = 5
+    local lastLive, livePending = -LIVE_EVERY, false
+    ns.Live.OnUpdate(function()
+      if livePending then return end
+      livePending = true
+      C_Timer.After(math.max(0, lastLive + LIVE_EVERY - GetTime()), function()
+        livePending, lastLive = false, GetTime()
+        Overlay.Refresh()
+      end)
+    end)
+  end
 end)

@@ -88,12 +88,26 @@ local function scanRecipe(rid)
   return skillRecipe(rid) or (ns.RecipeFromSchematic and ns.RecipeFromSchematic(rid))
 end
 
+-- Learned recipes with reagents by the item they make, built once per scan table (a new or
+-- synced scan is always a new table); the first such recipe of a scan wins, as before.
+local makersOf = setmetatable({}, { __mode = "k" })
+local function makers(scan)
+  local m = makersOf[scan]
+  if not m then
+    m = {}
+    for rid, r in pairs(scan.recipes) do
+      if r.learned and r.out and r.r and #r.r > 0 and not m[r.out] then m[r.out] = { rid = rid, r = r } end
+    end
+    makersOf[scan] = m
+  end
+  return m
+end
+
 -- The learned recipe that makes an item (an intermediate), or nil.
 local function maker(itemID)
   for _, scan in ipairs(ownScans()) do
-    for rid, r in pairs(scan.recipes) do
-      if r.learned and r.out == itemID and r.r and #r.r > 0 then return { rid = rid, r = r } end
-    end
+    local hit = makers(scan)[itemID]
+    if hit then return hit end
   end
   return nil
 end
