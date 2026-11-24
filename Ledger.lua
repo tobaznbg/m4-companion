@@ -134,22 +134,63 @@ local function deposit(fn, ...)
 end
 
 hook("PostItem", function(location, duration, quantity, bid, buyout)
-  table.insert(posting, { k = "post", i = itemAt(location), u = quantity or 1, p = buyout, d = duration,
+  -- items: one auction per unit (n created events for one post)
+  table.insert(posting, { k = "post", i = itemAt(location), u = quantity or 1, p = buyout, d = duration, auctions = quantity or 1,
     dep = deposit("CalculateItemDeposit", location, duration, quantity or 1) })
 end)
 
 hook("PostCommodity", function(location, duration, quantity, unitPrice)
   local itemID = itemAt(location)
-  table.insert(posting, { k = "post", i = itemID, u = quantity, p = unitPrice, d = duration,
+  table.insert(posting, { k = "post", i = itemID, u = quantity, p = unitPrice, d = duration, auctions = 1,
     dep = itemID and deposit("CalculateCommodityDeposit", itemID, duration, quantity) })
 end)
 
-ns.On("AUCTION_HOUSE_AUCTION_CREATED", function()
-  local e = table.remove(posting, 1)
-  if e then add(ns.AuctionHouse.Tag(e)) end
+-- The exact deposit of every auction created, by its id: ns.db.auctionDep[auctionID] =
+-- { d = copper per unit, t } (the Auktionen tab shows what cancelling loses). A post of n
+-- items creates n auctions: the created events after the first belong to the same post.
+local current = nil -- { per = deposit per unit, left = auctions still to come }
+ns.On("AUCTION_HOUSE_AUCTION_CREATED", function(_, auctionID)
+  if not (current and current.left > 0) then
+    local e = table.remove(posting, 1)
+    if e then
+      local n = e.auctions or 1
+      e.auctions = nil
+      add(ns.AuctionHouse.Tag(e))
+      current = { per = e.dep and (e.u or 0) > 0 and e.dep / e.u or nil, left = n }
+    else
+      current = nil
+    end
+  end
+  if current then
+    current.left = current.left - 1
+    if auctionID and current.per then
+      ns.db.auctionDep = ns.db.auctionDep or {}
+      ns.db.auctionDep[auctionID] = { d = current.per, t = time() }
+    end
+  end
 end)
 
-ns.On("AUCTION_HOUSE_CLOSED", function() posting, bids, commodity = {}, {}, nil end)
+-- Deposit per unit of the newest logged post of an item at this unit price (household), nil
+-- without one: auctions created before their deposit was recorded by id.
+function Ledger.PostDeposit(itemID, unit)
+  local events = Ledger.HouseholdEvents and Ledger.HouseholdEvents() or {}
+  for i = #events, 1, -1 do
+    local e = events[i]
+    if e.k == "post" and e.i == itemID and e.dep and (e.u or 0) > 0 and (not unit or not e.p or math.abs(e.p - unit) <= 1) then
+      return e.dep / e.u
+    end
+  end
+end
+
+-- deposits of auctions older than 3 days (the longest duration is 48 h) are gone
+ns.OnReady(function()
+  local now = time()
+  for id, v in pairs(ns.db.auctionDep or {}) do
+    if type(v) ~= "table" or now - (v.t or 0) > 3 * 86400 then ns.db.auctionDep[id] = nil end
+  end
+end)
+
+ns.On("AUCTION_HOUSE_CLOSED", function() posting, bids, commodity, current = {}, {}, nil, nil end)
 
 -- Mails -----------------------------------------------------------------------------
 

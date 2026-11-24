@@ -503,7 +503,10 @@ local function updateAuctionRow(row)
       local api = C_AuctionHouse
       if d and id and not isSold(d) then
         local lost = 0
-        local per = ns.Profit and ns.Profit.DepositPerUnit and ns.Profit.DepositPerUnit(id)
+        -- exact: the deposit of this auction (recorded when it was created), else the logged post
+        -- of this item at this unit price (its deposit per unit)
+        local rec = d.auctionID and ns.db.auctionDep and ns.db.auctionDep[d.auctionID]
+        local per = rec and rec.d or (ns.Ledger and ns.Ledger.PostDeposit and ns.Ledger.PostDeposit(id, SellInfo.RowUnit(d)))
         if per then lost = lost + per * (d.quantity or 1) end
         if d.auctionID and api and api.GetCancelCost then
           local ok, c = pcall(api.GetCancelCost, d.auctionID)
