@@ -778,9 +778,8 @@ end
 --     offer and F − 1: undercutters orient on the cheapest offer, and a bait just above the
 --     vendor price costs next to nothing when a bargain hunter takes it (the vendor would not
 --     have paid more) - the other bait setters at Schweres Leder use exactly that (1s50 -> 1s88).
---   N: all units up to the last foreign one at or under F, cheapest first (an own bait in between
---     is bought back - the game sells the cheapest N, own ones included), as many as the rest of
---     the day's budget pays.
+--   N: foreign units at or under F and cheaper than our own cheapest offer (the game refuses a
+--     purchase that would take an own unit), cheapest first, as many as the budget pays.
 -- Returns { market, dep, limit = F, bait = K, baitLies, catch (foreign units <= F), n, sum, top
 -- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
 Detail.FISH_DEPTH = 20
@@ -809,29 +808,31 @@ function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
   end
   local low = (vendorSell and vendorSell > 0) and math.ceil(vendorSell * 1.25) or math.floor(p.market * 0.55)
   p.limit, p.bait = limit, math.max(1, math.min(limit - 1, cheapest and cheapest - 1 or limit - 1, low))
-  -- The game sells the cheapest N units, own ones included (it does not skip them): so N
-  -- counts every unit up to the last level with a foreign one, an own bait in between is
-  -- bought back (it costs the cut). Levels with only own units after the last foreign one
-  -- are not taken. A level the budget no longer pays in full is the last.
-  local lastForeign = 0
-  for k, r in ipairs(list) do
-    if r.unit > limit then break end
-    if (r.own or 0) > 0 and r.unit <= p.bait then p.baitLies = true end
-    local f = foreign(r)
-    p.catch = p.catch + f
-    if f > 0 then lastForeign = k end
-  end
+  -- The game sells the cheapest N units and refuses a purchase that would take an own one
+  -- ("DatabaseError"): N counts foreign units only in levels cheaper than our cheapest own
+  -- offer (our bait), cheapest first; the first level with an own unit ends the catch. A level
+  -- the budget no longer pays in full is the last.
   local left = p.left
   p.ownIn = 0
-  for k = 1, lastForeign do
-    local r = list[k]
-    local q = r.qty or 0
-    local take = math.min(q, math.floor(left / r.unit))
+  for _, r in ipairs(list) do
+    if r.unit > limit then break end
+    if (r.own or 0) > 0 then
+      if r.unit <= p.bait then p.baitLies = true end
+      break
+    end
+    local f = foreign(r)
+    p.catch = p.catch + f
+    local take = math.min(f, math.floor(left / r.unit))
     if take > 0 then
       p.n, p.sum, left, p.top = p.n + take, p.sum + take * r.unit, left - take * r.unit, r.unit
-      p.ownIn = p.ownIn + math.min(take, r.own or 0)
     end
-    if take < q then break end
+    if take < f then break end
+  end
+  -- an own bait further back still "lies" for the button
+  if not p.baitLies then
+    for _, r in ipairs(list) do
+      if (r.own or 0) > 0 and r.unit <= p.bait then p.baitLies = true break end
+    end
   end
   return p
 end
