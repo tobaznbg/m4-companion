@@ -1170,6 +1170,21 @@ do
   -- click - first click asks, second click buys.
   Fish.autoBlocked = true
 
+  -- The price of our cheapest own offer of the item in the auction house (baits set and not
+  -- seen gone, own rows of the last search), nil without one.
+  function Fish.OwnMin(id)
+    local m
+    for _, e in ipairs(Fish.DB().log) do
+      if e.k == "bait" and e.i == id and not e.gone and (not m or e.p < m) then m = e.p end
+    end
+    if Fish.rows and Fish.rows.id == id then
+      for _, r in ipairs(Fish.rows.list or {}) do
+        if (r.own or 0) > 0 and (not m or r.unit < m) then m = r.unit end
+      end
+    end
+    return m
+  end
+
   function Fish.Plan(id)
     local rows = Fish.rows
     if not (id and rows and rows.id == id) then return nil end
@@ -1332,8 +1347,9 @@ do
       local limit = (plan and plan.limit) or (Fish.lastLimit and Fish.lastLimit.id == shownID and Fish.lastLimit.limit)
       -- our own bait as the cheapest offer: a probe for 1 unit would be that unit (the game does
       -- not sell it, the buy fails) - the click asks for a fresh search at once instead
-      local front = Fish.rows and Fish.rows.id == shownID and Fish.rows.list and Fish.rows.list[1]
-      if not catch and front and (front.own or 0) > 0 then
+      -- with an own offer of ours in the auction house the game refuses the ask ("DatabaseError":
+      -- it would have to offer our unit first) - the click asks for a fresh search instead
+      if not catch and Fish.OwnMin(shownID) then
         if ns.AHSearch and ns.AHSearch.Request then ns.Safe(ns.AHSearch.Request, shownID, nil, true) end
         limit = nil
       end
@@ -1617,15 +1633,7 @@ do
         -- game sells our own bait too: a probe at or above the price of a bait of ours still in
         -- the auction house would buy that bait back (a loss of the cut, and the next click sets
         -- the next bait) - only a price under every bait of ours counts.
-        local ownMin
-        for _, e in ipairs(Fish.DB().log) do
-          if e.k == "bait" and e.i == p.itemID and not e.gone and (not ownMin or e.p < ownMin) then ownMin = e.p end
-        end
-        if Fish.rows and Fish.rows.id == p.itemID then
-          for _, r in ipairs(Fish.rows.list or {}) do
-            if (r.own or 0) > 0 and (not ownMin or r.unit < ownMin) then ownMin = r.unit end
-          end
-        end
+        local ownMin = Fish.OwnMin(p.itemID)
         local unitAvg = total and p.n > 0 and total / p.n or nil
         if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget
             or (ownMin and unitAvg and unitAvg >= ownMin) then
@@ -1699,6 +1707,12 @@ do
         for k, v in pairs(names) do if v == a then text = "AH-Fehler " .. k end end
       end
       Fish.stat.lastError = string.format("%s (%s, %d Stück)", tostring(text), p.state, p.n)
+      if p.blind and p.state == "asking" then
+        -- a probe the game refused: no word, ready for the next click
+        Fish.pending = nil
+        ns.Safe(Fish.Refresh)
+        return
+      end
       Fish.Note(tostring(text))
     end
     ns.On("UI_ERROR_MESSAGE", function(_, a, b) gameError("UI_ERROR_MESSAGE", a, b) end)
