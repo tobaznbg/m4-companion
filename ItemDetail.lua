@@ -786,9 +786,6 @@ local function renderBody()
   end
   line("Trend", trend or "–")
   local demand = ns.Item.DemandText(item)
-  if demand and item.certain and item.certain >= 1 then
-    demand = demand .. "  ·  mind. " .. count(item.certain) .. " / Tag verkauft"
-  end
   line("Nachfrage", demand or "–")
   line("Angebot AH", string.format("%s Angebote  ·  %s Stück", count(item.offers), count(item.quantity)))
   -- How old the figures above are: the search on opening, else the newest source.
@@ -922,9 +919,6 @@ local function renderBody()
       end
       local p = teach.product
       local demand = ns.Item.DemandText(p)
-      if demand and p.certain and p.certain >= 1 then
-        demand = demand .. "  ·  mind. " .. count(p.certain) .. " / Tag verkauft"
-      end
       line("Nachfrage (Produkt)", demand or "–")
       local pt = ns.Item.TrendText(p)
       if pt and p.trend then
