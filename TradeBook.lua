@@ -1067,7 +1067,7 @@ local function collectStock()
       sub = sub, gain = sell or cost, -- (sorts by worth)
       -- the list shows what the units are worth (at the auction house after the cut; without a
       -- price their cost, grey)
-      cols = { name, tostring(n), sell and money(sell) or (MUTED .. money(cost) .. "|r") },
+      cols = { name, tostring(n), sell and money(sell) or (MUTED .. money(cost) .. "|r"), gain and signed(gain) or (MUTED .. "–|r") },
       values = { tostring(n), money(s.unitCost), money(cost), sell and money(sell / n) or "–",
         sell and money(sell) or "–", pctText(gain, cost), gain and signed(gain) or "–" } }
     g.units, g.cost = g.units + n, g.cost + cost
@@ -1167,7 +1167,7 @@ local function buildStock(page)
     title = "Herkunft",
     groupLabels = { "Bestand", "Einkauf", "Erlös (nach Gebühr)", "Marge", "Buchgewinn" },
     itemLabels = { "Stück", "Einkauf / Stk.", "Einkauf", "Erlös / Stk.", "Erlös", "Marge", "Buchgewinn" },
-    listCols = { { "Item", 20, "LEFT", 190 }, { "Stück", 245, "RIGHT" }, { "Wert", 315, "RIGHT" } },
+    listCols = { { "Item", 20, "LEFT", 150 }, { "Stück", 200, "RIGHT" }, { "Wert", 268, "RIGHT" }, { "Buchgewinn", 338, "RIGHT" } },
     balanceLabels = { "Gold", "AH Transit", "Ware (AH-Wert)", "Zusammen", "Buchgewinn Ware" },
     collect = collectStock,
   })
