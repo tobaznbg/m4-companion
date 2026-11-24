@@ -914,3 +914,30 @@ end
 function Profit.BreakEven(cost)
   return cost and math.ceil(cost / (1 - 0.05)) or nil
 end
+
+-- Deposits lost on an item's cancelled and expired auctions, spread over the units still to sell
+-- (copper per unit, 0 without): they were spent on the units now in stock, so every one of them
+-- has to bring its share back. Counted since the stock was last empty (made or bought in,
+-- sold, vendored or used in crafts out), so old, settled rounds do not weigh on today's units.
+function Profit.LostDepositPerUnit(itemID)
+  local _, _, _, _, _, lost = replayAll()
+  local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
+  local q, acc = 0, 0
+  for _, e in ipairs(events) do
+    local id = idOf(e)
+    if id == itemID then
+      if e.k == "craft" or e.k == "buy" then
+        if q <= 0 then q, acc = 0, 0 end -- a new round
+        q = q + (e.u or 1)
+      elseif e.k == "sale" or e.k == "vendor" then
+        q = q - (e.u or 1)
+      elseif (e.k == "expired" or e.k == "cancelled") and lost and lost[e] then
+        acc = acc + lost[e]
+      end
+    elseif e.k == "craft" and e.r then
+      for _, g in ipairs(e.r) do if g.i == itemID then q = q - (g.n or 0) end end
+    end
+  end
+  if q <= 0 or acc <= 0 then return 0 end
+  return acc / q
+end

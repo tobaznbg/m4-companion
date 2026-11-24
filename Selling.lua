@@ -105,7 +105,10 @@ local function askPrice(e)
   if ask * (1 - ns.Item.CUT) <= vendor then return nil, "unter Händlerpreis" end
   -- Lowest sensible price: what it costs to make (own learned recipe) or R (median of
   -- yesterday, ns.Item), whichever is higher. Below it, better wait than join the undercutting.
-  local floor = math.max(ns.CraftingCost and ns.CraftingCost(e.itemID) or 0, item.ref or 0)
+  -- (the making cost plus its share of deposits already lost on cancelled / expired auctions)
+  local made = ns.CraftingCost and ns.CraftingCost(e.itemID) or 0
+  if made > 0 and ns.Profit and ns.Profit.LostDepositPerUnit then made = made + ns.Profit.LostDepositPerUnit(e.itemID) end
+  local floor = math.max(made, item.ref or 0)
   if floor > 0 and ask < floor then
     return ask, "unter Mindestpreis " .. money(floor) .. " – besser liegen lassen", true
   end

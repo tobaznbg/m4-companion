@@ -814,7 +814,9 @@ local function renderBody()
       line("Einkauf / Stk.", "Beute")
     else
       line("Einkauf / Stk.", money(math.floor(cost + 0.5)))
-      line("Minimalpreis", money(ns.Profit.BreakEven(cost)))
+      -- lost deposits of this item's cancelled / expired auctions raise it (Profit.LostDepositPerUnit)
+      local lostShare = ns.Profit.LostDepositPerUnit and ns.Profit.LostDepositPerUnit(itemID) or 0
+      line("Minimalpreis", money(ns.Profit.BreakEven(cost + lostShare)))
     end
     local other
     if fresh and fresh.state == "done" then
