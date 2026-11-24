@@ -1666,6 +1666,12 @@ do
     ns.On("COMMODITY_PRICE_UPDATED", function(_, unitPrice, total)
       local p = Fish.pending
       if not (p and p.state == "asking") then return end -- not ours: Blizzard's buy dialog
+      -- Measured: while hammering, the asks take the throttle and searches starve (gaps up to
+      -- 23 s) - then the bait state and the catch sizes go stale. After every answer a search
+      -- goes to the front when the last result is older than 1.5 s: asks and searches alternate.
+      if GetTime() - (Fish.stat.lastResults or 0) > 1.5 and ns.AHSearch and ns.AHSearch.Request then
+        ns.Safe(ns.AHSearch.Request, p.itemID, nil, true)
+      end
       total = tonumber(total)
       Fish.stat.quotes = Fish.stat.quotes + 1
       Fish.stat.lastQuote = string.format("%s für %d (Plan %s)", total and money(total) or "?", p.n, money(p.sum))
