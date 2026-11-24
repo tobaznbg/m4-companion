@@ -768,6 +768,7 @@ do
   local W, H = 900, 520
   local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 64, 34 -- plot margins in the page
   local RANGES = {
+    { key = "today", today = true, button = "Heute", label = "heute" },
     { key = "2d", span = 2 * 86400, button = "2 Tage", label = "2 Tage" },
     { key = "7d", span = 7 * 86400, button = "7 Tage", label = "7 Tage" },
     { key = "all", button = "Alles", label = "alles" },
@@ -776,12 +777,18 @@ do
   local OUT_RGB, TAIL_RGB = { 1, 0.71, 0.28 }, { 0.85, 0.95, 1 }
   local SOURCES = { cloud = "Cloud-Snapshot", scan = "eigener Vollscan", search = "eigene Suche",
     players = "andere Spieler (Cloud)", live = "andere Spieler (live)" }
-  local TAIL_MAX = 200 -- live points kept per item and house
+  local TAIL_MAX = 1500 -- fine points kept per item and house (only changes: a busy day fits)
   local win, ui, shownID, ticker, pending
   local liveTicker -- the search every second while shown at the auction house
   local draw, hover -- forward declared
   local used = {}
-  local tails = {} -- "house:itemID" -> { { t, p, q, src }... } oldest first, this session
+  -- "house:itemID" -> { { t, p, q, src }... } oldest first: own and live observations finer than
+  -- the hourly history, kept in the saved variables for TAIL_KEEP (across reloads and logins)
+  local TAIL_KEEP = 48 * 3600
+  local function tailStore()
+    ns.db.chartTail = ns.db.chartTail or {}
+    return ns.db.chartTail
+  end
 
   -- Epoch of a German time (Detail.Berlin's inverse; off by an hour only inside the DST hour).
   local function fromBerlin(b)
@@ -913,18 +920,28 @@ do
     for _, r in ipairs(RANGES) do
       if r.key == k then return r end
     end
-    return RANGES[2] -- 7 days
+    return RANGES[3] -- 7 days
   end
 
   -- Live tail ------------------------------------------------------------------------------
 
   -- The session's points of the item in the current house (created on first need).
   local function tailOf(id)
+    local tails = tailStore()
     local key = tostring(ns.AuctionHouse.CloudID() or ns.AuctionHouse.Current()) .. ":" .. id
     local list = tails[key]
     if not list then list = {}; tails[key] = list end
     return list
   end
+  -- old points go on login: older than TAIL_KEEP, empty lists too
+  ns.OnReady(function()
+    local tails, cut = tailStore(), time() - TAIL_KEEP
+    for key, list in pairs(tails) do
+      local keep = {}
+      for _, pt in ipairs(list) do if pt.t >= cut then keep[#keep + 1] = pt end end
+      tails[key] = #keep > 0 and keep or nil
+    end
+  end)
 
   -- Remembers the item's price now (Item.Get) as a point when its time is new. The cloud
   -- snapshot is what the history is made of: it is not a live point.
@@ -1194,6 +1211,11 @@ do
     local series = Detail.FineSeries(id)
     local axisEnd = time()
     local span = rng.span or (series and series.first and math.max(axisEnd - series.first, 6 * 3600)) or 7 * 86400
+    if rng.today then
+      -- today: from midnight (the PC's clock = Berlin), at least the last hour
+      local d = date("*t", axisEnd)
+      span = math.max(3600, axisEnd - time({ year = d.year, month = d.month, day = d.day, hour = 0 }))
+    end
     local w, h = ui.plot:GetWidth(), ui.plot:GetHeight()
     if not w or w < 50 then w, h = W - 16 - LEFT - RIGHT, H - 68 - TOP - BOTTOM end -- before the first layout
     local pool = ns.DayTrade and ns.DayTrade.Pool and ns.DayTrade.Pool()
@@ -1527,7 +1549,13 @@ do
     -- new data of the item: own searches and scans (Observations.lua), other players' over the
     -- addon channel (LiveChannel.lua), the end of an own full scan (AuctionScan.lua)
     if ns.Obs and ns.Obs.OnRecord then
-      ns.Obs.OnRecord(function(itemID) if itemID == shownID then soon() end end)
+      ns.Obs.OnRecord(function(itemID)
+        if itemID == shownID then soon() end
+        -- searches of any item are kept as fine points too (not the thousands of a full scan)
+        if itemID ~= shownID and not (ns.AuctionScan and ns.AuctionScan.Running and ns.AuctionScan.Running()) then
+          ns.Safe(record, itemID, ns.Item.Get(itemID))
+        end
+      end)
     end
     if ns.Live and ns.Live.OnUpdate then ns.Live.OnUpdate(soon) end
     if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(soon) end
