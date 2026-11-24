@@ -1586,7 +1586,7 @@ do
         end
       else
         look(ui.fishBtn, true, false, note or ("2 Preis prüfen (bis " .. money(K) .. ")"
-          .. (#Fish.BaitsOut(id) > 0 and (" · Köder liegt") or "")), nil)
+          .. (Fish.lastAnswer and (" · zuletzt " .. money(Fish.lastAnswer) .. " – zu teuer") or "")), nil)
       end
     end
   end
@@ -1719,6 +1719,8 @@ do
         -- dearer: dropped without a word, the cycle starts again (next click: a bait)
         if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
           Fish.stat.probes = (Fish.stat.probes or 0) + 1
+          -- shown on the button: the answer came, it was too dear (no silent drop)
+          Fish.lastAnswer = total and (total / math.max(1, p.n)) or nil
           Fish.pending = nil
           Fish.cycle = "bait"
           ns.Safe(Fish.Refresh)
