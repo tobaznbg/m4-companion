@@ -1098,16 +1098,21 @@ do
   --             in it; the round of the last bait is still open and not counted
   --   units, paid, avg   the deals: units bought, what they cost, the average unit price
   --   med       the market value: median of yesterday's hourly cheapest offers (cloud)
-  --   result    units x med - paid (before the auction cut)
+  --   gone, baitLoss   baits gone (every bait but the last, still open one) and what they
+  --             were sold under the market value: sum of (med - bait price)
+  --   result    units x med - paid - baitLoss (before the auction cut)
   -- nil without a bait or a deal today.
   function Fish.Balance(id)
-    local b = { units = 0, paid = 0, baits = 0, burned = 0 }
-    local open, deal = false, false
+    local b = { units = 0, paid = 0, baits = 0, burned = 0, gone = 0, goneSum = 0 }
+    local open, deal = nil, false
     for _, e in ipairs(Fish.DB().log) do
       if e.i == id and e.k == "bait" then
         b.baits = b.baits + 1
-        if open and not deal then b.burned = b.burned + 1 end
-        open, deal = true, false
+        if open then
+          if not deal then b.burned = b.burned + 1 end
+          b.gone, b.goneSum = b.gone + 1, b.goneSum + (open.p or 0)
+        end
+        open, deal = e, false
       elseif e.i == id and e.k == "catch" then
         b.units, b.paid = b.units + (e.n or 0), b.paid + (e.c or 0)
         deal = true
@@ -1117,7 +1122,8 @@ do
     b.avg = b.units > 0 and math.floor(b.paid / b.units + 0.5) or nil
     local e = ns.Item.Get(id)
     b.med = e and e.medYesterday or nil
-    b.result = b.med and (b.units * b.med - b.paid) or nil
+    b.baitLoss = b.med and (b.gone * b.med - b.goneSum) or nil
+    b.result = b.med and (b.units * b.med - b.paid - b.baitLoss) or nil
     return b
   end
 
@@ -2038,7 +2044,9 @@ do
           money(bal.paid), 1, 1, 1, 1, 1, 1)
         if bal.med then
           GameTooltip:AddDoubleLine("Marktwert (Median gestern " .. money(bal.med) .. ")", money(bal.units * bal.med), 1, 1, 1, 1, 1, 1)
-          GameTooltip:AddDoubleLine("Gewinn = Marktwert − Deals", (bal.result >= 0 and "+" or "−") .. money(math.abs(bal.result)),
+          GameTooltip:AddDoubleLine(string.format("Köder weg: %d × (Median − Köderpreis)", bal.gone),
+            "−" .. money(math.abs(bal.baitLoss)), 1, 1, 1, 1, 0.42, 0.42)
+          GameTooltip:AddDoubleLine("Gewinn = Marktwert − Deals − Köder", (bal.result >= 0 and "+" or "−") .. money(math.abs(bal.result)),
             1, 0.82, 0, bal.result >= 0 and 0.37 or 1, bal.result >= 0 and 0.83 or 0.42, bal.result >= 0 and 0.55 or 0.42)
           GameTooltip:AddLine("vor Auktionsgebühr", 0.6, 0.6, 0.62)
         end
