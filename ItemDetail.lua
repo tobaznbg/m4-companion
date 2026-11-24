@@ -1199,6 +1199,7 @@ do
     print(string.format("  Anfrage: %s · automatisch gesperrt: %s · Pause noch %.1f s · letzte Antwort: %s",
       p and (p.state .. " " .. p.n .. " Stück") or "keine", Fish.autoBlocked and "ja (2 Klicks)" or "nein",
       math.max(0, (Fish.cooldown or 0) - GetTime()), st.lastQuote or "–"))
+    print("  letzter Spielfehler: " .. (st.lastError or "–"))
   end
 
 
@@ -1431,18 +1432,22 @@ do
     if (Fish.missed or 0) > 0 then parts[#parts + 1] = G .. "verpasst|r " .. Fish.missed end
     -- today's result (details in the line's tooltip)
     local bal = Fish.Balance(id, plan and plan.market, plan and plan.dep)
-    if bal and bal.result then
-      if bal.avg and bal.ref then
-        parts[#parts + 1] = string.format("%sØ Einkauf|r %s %s(R %s)|r", G, money(bal.avg), M, money(bal.ref))
-      end
-      parts[#parts + 1] = string.format("%sHeute|r %s%s%s|r", G, bal.result >= 0 and "|cff5fd38d+" or "|cffff6b6b−",
-        money(math.abs(bal.result)), "")
+    if bal and bal.avg and bal.ref then
+      parts[#parts + 1] = string.format("%sØ Einkauf|r %s %s(R %s)|r", G, money(bal.avg), M, money(bal.ref))
+    end
+    -- the result is always shown (nothing done today: ±0)
+    local result = bal and bal.result or 0
+    parts[#parts + 1] = string.format("%sHeute|r %s%s|r", G, result > 0 and "|cff5fd38d+" or (result < 0 and "|cffff6b6b−" or "±"),
+      money(math.abs(result)))
+    if bal then
+      parts[#parts + 1] = string.format("%sKöder|r %d %s(%d weggekauft)|r", G, bal.baits, M, bal.sold)
     end
     local line1, line2 = {}, {}
     for k, part in ipairs(parts) do
       if k <= first then line1[#line1 + 1] = part else line2[#line2 + 1] = part end
     end
-    ui.fishLine.text:SetText(table.concat(line1, "  ·  ") .. (#line2 > 0 and ("\n" .. table.concat(line2, "  ·  ")) or ""))
+    ui.fishLine.text:SetText(table.concat(line1, "  ·  "))
+    ui.fishLine.text2:SetText(table.concat(line2, "  ·  "))
     -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
     local lies = plan and plan.baitLies or false
     if Fish.baitWas and Fish.baitWas.id == id and Fish.baitWas.lies and not lies then Fish.baitFlash = now + 3 end
@@ -1637,6 +1642,21 @@ do
       end
       ns.Safe(Fish.Refresh)
     end
+    -- the game's own error text (UI_ERROR_MESSAGE, AUCTION_HOUSE_SHOW_ERROR) while we ask or buy:
+    -- kept for "/m4 fisch" and shown in the button - the reason a buy fails
+    local function gameError(event, a, b)
+      local p = Fish.pending
+      if not p then return end
+      local text = type(b) == "string" and b or (type(a) == "string" and a) or tostring(a)
+      if event == "AUCTION_HOUSE_SHOW_ERROR" and type(a) == "number" then
+        local names = Enum and Enum.AuctionHouseError or {}
+        for k, v in pairs(names) do if v == a then text = "AH-Fehler " .. k end end
+      end
+      Fish.stat.lastError = string.format("%s (%s, %d Stück)", tostring(text), p.state, p.n)
+      Fish.Note(tostring(text))
+    end
+    ns.On("UI_ERROR_MESSAGE", function(_, a, b) gameError("UI_ERROR_MESSAGE", a, b) end)
+    ns.On("AUCTION_HOUSE_SHOW_ERROR", function(_, a) gameError("AUCTION_HOUSE_SHOW_ERROR", a) end)
     ns.On("ADDON_ACTION_BLOCKED", blocked)
     ns.On("ADDON_ACTION_FORBIDDEN", blocked)
     ns.On("AUCTION_HOUSE_CLOSED", function()
@@ -1747,10 +1767,15 @@ do
     local fl = CreateFrame("Button", nil, page)
     fl:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT, 34)
     fl:SetPoint("RIGHT", page, "RIGHT", -6, 0)
-    fl:SetHeight(30) -- two lines
+    fl:SetHeight(30) -- two lines: market and catch figures, then today's result
     fl.text = label(fl, "GameFontHighlightSmall")
-    fl.text:SetAllPoints()
+    fl.text:SetPoint("TOPLEFT", fl, "TOPLEFT", 0, 0)
+    fl.text:SetPoint("RIGHT", fl, "RIGHT", 0, 0)
     fl.text:SetJustifyH("LEFT")
+    fl.text2 = label(fl, "GameFontHighlightSmall")
+    fl.text2:SetPoint("TOPLEFT", fl.text, "BOTTOMLEFT", 0, -3)
+    fl.text2:SetPoint("RIGHT", fl, "RIGHT", 0, 0)
+    fl.text2:SetJustifyH("LEFT")
     fl:RegisterForClicks("RightButtonUp")
     fl:SetScript("OnClick", function(self) ns.Safe(Fish.Menu, self) end)
     fl:SetScript("OnEnter", function(self)
