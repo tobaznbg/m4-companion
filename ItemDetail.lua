@@ -1191,7 +1191,7 @@ do
     if not (id and rows and rows.id == id) then return nil end
     local c = Fish.Cfg(id)
     local e = ns.Item.Get(id)
-    local plan = Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, c.budget, Fish.DB().spent)
+    local plan = Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, math.huge, 0) -- no daily budget
     if plan and plan.limit then Fish.lastLimit = { id = id, limit = plan.limit } end
     return plan
   end
@@ -1325,10 +1325,6 @@ do
     local p = Fish.pending
     if p then
       if p.state == "confirm" and p.itemID == shownID then
-        -- the budget once more: another buy may have counted since the quote
-        if Fish.DB().spent + p.total > Fish.Cfg(p.itemID).budget then
-          return Fish.Drop(true, "Tagesbudget reicht nicht mehr")
-        end
         p.state, p.t = "buying", GetTime()
         local ok = pcall(C_AuctionHouse.ConfirmCommoditiesPurchase, p.itemID, p.n)
         if not ok then return Fish.Drop(false, "Kauf nicht möglich") end
@@ -1401,10 +1397,10 @@ do
 
   -- The decision on the last search (only one sent after Fish.searchFrom counts):
   --   "catch", n   an offer of more than one foreign unit at or under K; n = all foreign units
-  --                at or under K within the budget
+  --                at or under K
   --   "lies", own  nothing fits, our bait is still there
   --   "bait"       nothing fits, no bait of ours -> set one
-  --   "wait", why  no fresh search yet / budget used up / bait switched off
+  --   "wait", why  no fresh search yet / bait switched off
   -- The buy limit is the price of the bait we set last (not the price a new bait would get:
   -- that one sits under the cheapest foreign offer, so a fresh undercut would never fit).
   function Fish.Limit(id, K)
@@ -1429,9 +1425,7 @@ do
         if f > 1 then big = true end
       end
     end
-    local left = Fish.Cfg(id).budget - Fish.DB().spent
-    if math.floor(left / K) < 1 then return "wait", "Tagesbudget aufgebraucht" end
-    if big then return "catch", math.min(n, math.floor(left / K)), K end
+    if big then return "catch", n, K end
     if own > 0 then return "lies", own end
     if Fish.noBait then return "wait", "kein Angebot > 1 Stück bis " .. money(K) .. " (Köder aus)" end
     return "bait"
@@ -1477,11 +1471,6 @@ do
         for _, g in ipairs(FISH_GAINS) do
           root:CreateRadio(math.floor(g * 100 + 0.5) .. " %", function() return math.abs(Fish.Cfg(id).minGain - g) < 1e-6 end,
             function() Fish.Set(id, "minGain", g) end)
-        end
-        root:CreateDivider()
-        root:CreateTitle("Tagesbudget (alle Fänge des Tages)")
-        for _, b in ipairs(FISH_BUDGETS) do
-          root:CreateRadio(money(b), function() return Fish.Cfg(id).budget == b end, function() Fish.Set(id, "budget", b) end)
         end
       end)
     else
@@ -1550,7 +1539,7 @@ do
     else
       parts[#parts + 1] = M .. "Markt – Suche läuft|r"
     end
-    parts[#parts + 1] = G .. "Budget|r " .. money(db.spent) .. " / " .. money(c.budget)
+    parts[#parts + 1] = G .. "heute gekauft|r " .. money(db.spent)
     local first = #parts -- the rest goes on a second line
     if (Fish.missed or 0) > 0 then parts[#parts + 1] = G .. "verpasst|r " .. Fish.missed end
     -- today's result (details in the line's tooltip)
@@ -1809,7 +1798,7 @@ do
       if p.blind then
         -- at most the bait price a unit -> "Bestätigen" on the next click; dearer: no buy,
         -- decided again on a new search (a new bait only if no fitting offer and none of ours)
-        if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
+        if not total or total > p.n * p.limit then
           Fish.stat.probes = (Fish.stat.probes or 0) + 1
           Fish.lastAnswer = total and (total / math.max(1, p.n)) or nil
           Fish.Dbg(string.format("3 Preis-Antwort: %s für %d Stück – zu teuer (max %s) → neue Suche",
@@ -1828,8 +1817,6 @@ do
         return Fish.Drop(true, nil, true) -- someone bought the cheap ones first
       elseif total > p.n * p.limit then
         why = "über der Fanggrenze: " .. money(total) .. " für " .. p.n .. " Stück"
-      elseif Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
-        why = "Tagesbudget reicht nicht: " .. money(total)
       end
       if why then return Fish.Drop(true, why) end
       p.state, p.total, p.unit, p.t = "confirm", total, unitPrice, GetTime()
@@ -2076,7 +2063,7 @@ do
         end
         GameTooltip:AddLine("Verkaufte Köder erscheinen erst mit ihrer Post (bis zu 1 h später).", 0.6, 0.6, 0.62, true)
       end
-      GameTooltip:AddLine("Rechtsklick: Mindestgewinn und Tagesbudget", 0.6, 0.6, 0.62)
+      GameTooltip:AddLine("Rechtsklick: Mindestgewinn", 0.6, 0.6, 0.62)
       GameTooltip:Show()
     end)
     fl:SetScript("OnLeave", function() GameTooltip:Hide() end)
