@@ -48,7 +48,8 @@ local function plan(s, capital)
   return qty, cost, qty * net - cost, true
 end
 
--- "Cloud 34m · Scan 21m · Spieler 3m": the age of each source, colored by it.
+-- "Cloud 34m · Scan 21m · Spieler 3m": the age of each source, colored by it. "Spieler" is the
+-- newest of the players' observations via the cloud and those heard live (LiveChannel.lua).
 local function freshness()
   local function part(label, t)
     if not t then return MUTED .. label .. " –|r" end
@@ -67,6 +68,8 @@ local function freshness()
   local players = id and ns.AHObs and ns.AHObs[id]
   local playersT = players and ns.Item.Epoch and ns.Item.Epoch(players.updated)
   if playersT and playersT <= 0 then playersT = nil end -- an empty shell of m4d (1970)
+  local liveT = ns.Live and ns.Live.NewestT(id)
+  if liveT and (not playersT or liveT > playersT) then playersT = liveT end
   return part("Cloud", cloudT) .. MUTED .. " · |r" .. part("Scan", scanT) .. MUTED .. " · |r" .. part("Spieler", playersT)
 end
 
@@ -250,4 +253,5 @@ ns.OnReady(function()
   if ns.Obs and ns.Obs.OnRecord then ns.Obs.OnRecord(function() C_Timer.After(0, Overlay.Refresh) end) end
   if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(Overlay.Refresh) end
   ns.AuctionHouse.OnChange(Overlay.Refresh)
+  if ns.Live then ns.Live.OnUpdate(Overlay.Refresh) end
 end)

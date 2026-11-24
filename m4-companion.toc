@@ -11,6 +11,7 @@ AuctionHouse.lua
 Style.lua
 Item.lua
 Observations.lua
+LiveChannel.lua
 Status.lua
 Tracker.lua
 Data_Leatherworking.lua

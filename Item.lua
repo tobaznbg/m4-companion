@@ -5,11 +5,12 @@
 --   now        "AH jetzt" in every view: the price it can be bought for right now, i.e. the
 --              cheapest offer (copper per unit), nil if not on offer; from the newest of
 --              collector snapshot, own full scan, own searches and other players'
---              observations (ns.AHObs, Data_Obs<house>.lua)
+--              observations (ns.AHObs, Data_Obs<house>.lua; live: ns.Live, LiveChannel.lua)
 --   offers, quantity   auctions / units listed at that time
 --   dataT      time() of the source "now" comes from
---   dataSource "cloud" (snapshot), "scan" (own full scan), "search" (own search) or "players"
---              (other players' observations via the cloud): where now / offers / quantity are from
+--   dataSource "cloud" (snapshot), "scan" (own full scan), "search" (own search), "players"
+--              (other players' observations via the cloud) or "live" (other players' observations
+--              over the addon channel this session): where now / offers / quantity are from
 --   levels     the cheapest unit prices of that source as "price:units;..." (at most 8, see
 --              Item.PriceLevels), nil when the source has none (snapshot; scans and searches
 --              not recorded as observations, e.g. of a house without cloud id)
@@ -165,6 +166,12 @@ function Item.Get(itemID)
   if p and p[1] > bestT then
     e.now, e.quantity, e.offers, e.levels, e.dataSource = p[2], p[3], p[4], p[6], "players"
     bestT = p[1]
+  end
+  -- other players' observations heard over the addon channel (LiveChannel.lua, loaded later)
+  local l = ns.Live and ns.Live.Get(id, itemID)
+  if l and l.t > bestT then
+    e.now, e.quantity, e.offers, e.levels, e.dataSource = l.m, l.q, l.n, l.d, "live"
+    bestT = l.t
   end
   e.dataT = bestT > 0 and bestT or nil
   if row then

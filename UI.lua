@@ -201,6 +201,26 @@ function UI.SetShown(shown)
   if shown then UI.Refresh() end
 end
 
+-- "/m4 live": state of the hidden channel that shares AH observations (no names).
+function UI.LiveStatus()
+  local P = "|cffffd100M4:|r "
+  local s = ns.Live.Stats()
+  print(P .. string.format("Live-Kanal %s: %s%s", ns.Live.CHANNEL,
+    s.joined and "|cff5fd38dbeigetreten|r" or "|cffff6b6bnicht beigetreten|r",
+    s.index and (" (Nr. " .. s.index .. ")") or ""))
+  print(string.format("  Gesendet: %d Nachrichten, %d Items · Empfangen: %d Nachrichten, %d Items übernommen",
+    s.sentMsgs, s.sentItems, s.recvMsgs, s.recvItems))
+  local why = {}
+  for reason, n in pairs(s.reasons) do why[#why + 1] = reason .. " " .. n end
+  table.sort(why)
+  print(string.format("  Verworfen: %d Nachrichten%s · unterdrückt: %d · gedrosselt: %d · Fehler: %d",
+    s.dropped, #why > 0 and (" (" .. table.concat(why, ", ") .. ")") or "", s.suppressed, s.throttled,
+    s.failed + s.errors))
+  print(string.format("  Warteschlange: %d Items, %d wartend · Tempo %.2f/s%s · gehört: %d Items in %d Häusern",
+    s.queue, s.pending, s.rate, s.combat and " (Kampf: Pause)" or "", s.entries, s.houses))
+  if s.lastError then print("  Letzter Fehler: " .. s.lastError) end
+end
+
 -- The farming tracker window is hidden for now (to be rebuilt); "/cf farm" still opens it.
 
 SLASH_M4COMPANION1 = "/cf"
@@ -232,6 +252,9 @@ SlashCmdList.M4COMPANION = function(msg)
   elseif msg == "overlay" or msg == "tageshandel" then
     -- /m4 overlay: the small movable day-trading overlay on and off (DayTradeOverlay.lua)
     if ns.DayTradeOverlay then ns.Safe(ns.DayTradeOverlay.Toggle) end
+  elseif msg == "live" then
+    -- /m4 live: the live channel of AH observations (LiveChannel.lua), counts only
+    if ns.Live then ns.Safe(UI.LiveStatus) end
   elseif msg == "buch" then
     if ns.TradeBook then ns.Safe(ns.TradeBook.Toggle) end
   elseif msg == "strip" then

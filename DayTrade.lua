@@ -6,7 +6,8 @@
 -- windows are 3 hours from buyHour / sellHour (Berlin time = the PC's clock), buyLimit and ask in
 -- copper per unit. The cloud only sets these parameters; what is on offer right now is the
 -- newest observation Item.Get knows, updated at once on an own search or scan:
---   * own search or full scan (Observations.lua), other players' observations (cloud): the 8
+--   * own search or full scan (Observations.lua), other players' observations (cloud, or live
+--     over the addon channel: LiveChannel.lua): the 8
 --     cheapest price levels - units at or under the limit counted from them, a lower bound ("≥")
 --     when all 8 are at or under it; the own full scan of that time counts its every listing,
 --   * else the cloud snapshot (cheapest only).
@@ -22,7 +23,7 @@ local DEPOSIT_2H = 0.05
 local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100"
 
 local page, split, selected
-local SOURCES = { cloud = "Cloud", scan = "Vollscan", search = "Suche", players = "Spieler" }
+local SOURCES = { cloud = "Cloud", scan = "Vollscan", search = "Suche", players = "Spieler", live = "Live" }
 
 local function money(c) return c and ns.FormatMoney(math.floor(c + 0.5), true) or "–" end
 
@@ -216,7 +217,7 @@ local function show(entry, c)
   end
   v.Advice:SetText(advice)
   v.Note:SetText("Fenster und Preise aus der Cloud (stündlich). Günstigster und Stückzahl aus der neuesten "
-    .. "Beobachtung: eigene Suche, eigener Vollscan, andere Spieler oder Cloud-Stand. "
+    .. "Beobachtung: eigene Suche, eigener Vollscan, andere Spieler (Cloud oder live) oder Cloud-Stand. "
     .. "Gebühr 5 %, Einstellgebühr 2 h " .. money(s.dep) .. " je Stück.")
 end
 
@@ -304,6 +305,8 @@ if ns.Obs then
   end)
 end
 ns.AuctionHouse.OnChange(function() refresh() end)
+-- other players' observations over the addon channel (ns.Live notifies at most once a second)
+if ns.Live then ns.Live.OnUpdate(function() refresh() end) end
 ns.OnReady(function()
   if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(refresh) end
 end)
