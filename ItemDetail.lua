@@ -778,7 +778,9 @@ end
 --     offer and F − 1: undercutters orient on the cheapest offer, and a bait just above the
 --     vendor price costs next to nothing when a bargain hunter takes it (the vendor would not
 --     have paid more) - the other bait setters at Schweres Leder use exactly that (1s50 -> 1s88).
---   N: foreign units at or under F, cheapest first, as many as the rest of the day's budget pays.
+--   N: all units up to the last foreign one at or under F, cheapest first (an own bait in between
+--     is bought back - the game sells the cheapest N, own ones included), as many as the rest of
+--     the day's budget pays.
 -- Returns { market, dep, limit = F, bait = K, baitLies, catch (foreign units <= F), n, sum, top
 -- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
 Detail.FISH_DEPTH = 20
@@ -807,20 +809,29 @@ function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
   end
   local low = (vendorSell and vendorSell > 0) and math.ceil(vendorSell * 1.25) or math.floor(p.market * 0.55)
   p.limit, p.bait = limit, math.max(1, math.min(limit - 1, cheapest and cheapest - 1 or limit - 1, low))
-  local left, full = p.left, true
-  for _, r in ipairs(list) do
+  -- The game sells the cheapest N units, own ones included (it does not skip them): so N
+  -- counts every unit up to the last level with a foreign one, an own bait in between is
+  -- bought back (it costs the cut). Levels with only own units after the last foreign one
+  -- are not taken. A level the budget no longer pays in full is the last.
+  local lastForeign = 0
+  for k, r in ipairs(list) do
     if r.unit > limit then break end
     if (r.own or 0) > 0 and r.unit <= p.bait then p.baitLies = true end
     local f = foreign(r)
     p.catch = p.catch + f
-    -- a level the budget no longer pays in full is the last: every later one is dearer
-    if full and f > 0 then
-      local take = math.min(f, math.floor(left / r.unit))
-      if take > 0 then
-        p.n, p.sum, left, p.top = p.n + take, p.sum + take * r.unit, left - take * r.unit, r.unit
-      end
-      if take < f then full = false end
+    if f > 0 then lastForeign = k end
+  end
+  local left = p.left
+  p.ownIn = 0
+  for k = 1, lastForeign do
+    local r = list[k]
+    local q = r.qty or 0
+    local take = math.min(q, math.floor(left / r.unit))
+    if take > 0 then
+      p.n, p.sum, left, p.top = p.n + take, p.sum + take * r.unit, left - take * r.unit, r.unit
+      p.ownIn = p.ownIn + math.min(take, r.own or 0)
     end
+    if take < q then break end
   end
   return p
 end
@@ -1470,7 +1481,8 @@ do
     elseif combat then
       look(ui.fishBtn, false, false, "Fischen", "nicht im Kampf")
     elseif plan and plan.n > 0 then
-      look(ui.fishBtn, true, true, string.format("%sKaufen: %d × bis %s = %s", bite and "Biss! " or "", plan.n, money(plan.top), money(plan.sum)),
+      look(ui.fishBtn, true, true, string.format("%sKaufen: %d × bis %s = %s%s", bite and "Biss! " or "", plan.n, money(plan.top), money(plan.sum),
+        (plan.ownIn or 0) > 0 and string.format(" (inkl. %d eigene)", plan.ownIn) or ""),
         Fish.autoBlocked and "Klick fragt den Preis an, der zweite Klick kauft" or "Klick fragt den Preis an")
       ui.fishBtn.blink = bite
     elseif plan and plan.catch > 0 then
