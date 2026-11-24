@@ -135,7 +135,8 @@ local function refresh()
     for i = 1, math.min(#sells, MAX_LINES) do
       local s = sells[i]
       add({ itemID = s.itemID, text = ns.ItemName(s.itemID) or ("Item " .. s.itemID),
-        right = string.format("%d× %s%s|r", s.held, s.post >= s.ask and GREEN or GOLD, money(s.post)),
+        right = string.format("%d× %s%s|r", s.held, s.post >= s.ask and GREEN or GOLD, money(s.post))
+          .. ((s.gain(s.post) or 0) > 0 and string.format("  %s+%s|r", GREEN, money(s.gain(s.post))) or ""),
         tip = s.post >= s.ask and "2 h einstellen, mindestens zum Zielpreis."
           or "2 h einstellen, 1 Kupfer unter dem Günstigsten (der liegt unter dem Zielpreis)." })
     end

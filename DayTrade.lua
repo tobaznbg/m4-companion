@@ -122,10 +122,23 @@ local function state(itemID, r)
   local held = ns.ShoppingList and ns.ShoppingList.Holdings and ns.ShoppingList.Holdings(itemID) or 0
   local e = ns.Item.Get(itemID)
   local dep = (e and e.vendorSell or 0) * DEPOSIT_2H
-  -- the lowest price that still returns the buy limit after cut and deposit
-  local floor = math.ceil((limit + dep) / (1 - CUT))
+  -- What one held unit really cost (ledger: bought / crafted, plus the deposits already lost on
+  -- it); the floor is then "no loss": cost and deposit back after the cut. Without stock (or
+  -- without a cost) the floor is the one of the buy limit.
+  local own, ownSource
+  if held > 0 and ns.Profit and ns.Profit.UnitCost then
+    local ok, c, src = pcall(ns.Profit.UnitCost, itemID)
+    if ok and c then
+      local okL, lost = pcall(ns.Profit.LostDepositPerUnit, itemID)
+      own, ownSource = c + (okL and lost or 0), src
+    end
+  end
+  local floor = math.ceil(((own or limit) + dep) / (1 - CUT))
   local s = { itemID = itemID, buyHour = buyHour, sellHour = sellHour, limit = limit, ask = ask, maxQty = maxQty,
-    profitDay = profitDay, avail = avail, offer = o, held = held, dep = dep, floor = floor }
+    profitDay = profitDay, avail = avail, offer = o, held = held, dep = dep, floor = floor, own = own,
+    ownSource = ownSource }
+  -- the profit of posting all held units at a price (nil without an own cost)
+  function s.gain(price) return own and price and held * (price * (1 - CUT) - dep - own) or nil end
   -- The windows only say when it is usually cheap or dear; what counts is the price now:
   -- an offer under the limit is a buy at any hour (the stock waits for the next sell window).
   local cheapNow = o.cheapest and o.cheapest <= limit
@@ -259,14 +272,17 @@ local function cardRows(s)
       }, MUTED .. "Nichts zum Einstellen im Haushalt.|r"
     end
     local price = s.post or s.ask
+    local gain = s.post and s.gain(price)
     return {
       { "Einstellen", string.format("%d Stück", s.held) },
       { "Preis (2 h)", s.post and money(price) or (RED .. "–|r") },
-      { "Erlös", s.post and money(s.held * (price * (1 - CUT) - s.dep)) or "–" },
-      { "Untergrenze", money(s.floor) },
+      { "Einstand", s.own and string.format("%s  %s%s|r", money(s.own), MUTED, s.ownSource or "") or (MUTED .. "unbekannt|r") },
+      { "Gewinn", gain and ((gain >= 0 and GREEN .. "+" or RED .. "−") .. money(math.abs(gain)) .. "|r")
+        or (s.post and money(s.held * (price * (1 - CUT) - s.dep)) .. MUTED .. " Erlös|r" or "–") },
+      { "Kein Verlust ab", money(s.floor) },
       { "Günstigster", now },
     }, s.post and ((s.post >= s.ask and GREEN or GOLD) .. string.format("Jetzt %d Stück für 2 h zu %s einstellen.|r", s.held, money(price)))
-      or (RED .. "Unterboten unter die Untergrenze – nicht einstellen.|r")
+      or (RED .. "Günstigster liegt unter deinem Einstand – nicht einstellen.|r")
   end
   return {
     { "Kauf ab", windowText(s.buyHour) },
