@@ -17,6 +17,9 @@ ns.AHSearch = AHSearch
 
 local api = C_AuctionHouse or {}
 local SPACING = 1.0        -- seconds between two searches (shared with the sniper)
+-- fishing mode (one item, nothing else searches): the game lets the next auction house message
+-- out about 0.5 s after the last answer (measured 24 Nov) - a search every 0.6 s
+local FISH_SPACING = 0.6
 local TIMEOUT = 6          -- own search without an answer
 local HANDED_TIMEOUT = 45  -- item handed to the sniper and still no result
 local LEVELS_MAX = 50
@@ -200,7 +203,8 @@ pump = function()
   end
   local itemID = queue[1]
   if not itemID then return end
-  if not ready() or AHSearch.Since() < SPACING then return schedule(0.25) end
+  local fish = ns.FishItem and ns.FishItem()
+  if not ready() or AHSearch.Since() < (fish and FISH_SPACING or SPACING) then return schedule(fish and 0.1 or 0.25) end
   table.remove(queue, 1)
   local e = entries[itemID]
   if e then send(e) else schedule(0.1) end

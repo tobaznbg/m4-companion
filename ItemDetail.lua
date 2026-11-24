@@ -2666,11 +2666,17 @@ do
         ticker = C_Timer.NewTicker(30, function() ns.Safe(draw) end)
       end
       if not liveTicker and C_Timer and C_Timer.NewTicker then
-        liveTicker = C_Timer.NewTicker(1, function()
-          -- no search while a quote of ours is open (its answer comes first); while our bait
-          -- lies the item goes ahead of other queued searches (a bite must be seen at once) -
-          -- AHSearch still keeps the game's pace
-          if shownID and not Fish.pending and ns.AHSearch and ns.AHSearch.IsOpen() then
+        liveTicker = C_Timer.NewTicker(0.2, function()
+          -- AHSearch keeps the pace (fishing mode: a search every 0.6 s). No search while a
+          -- quote or buy of ours is open, and none for 2 s while the last search shows a catch:
+          -- the click's price ask must not wait behind a search (the game holds every message
+          -- about 0.5 s after the last answer)
+          local catchShown = false
+          if shownID and Fish.rows and Fish.rows.id == shownID and Fish.rows.t and GetTime() - Fish.rows.t < 2 then
+            local K = Fish.BaitPrice(shownID, Fish.Plan(shownID))
+            catchShown = K and Fish.State(shownID, K) == "catch" or false
+          end
+          if shownID and not Fish.pending and not catchShown and ns.AHSearch and ns.AHSearch.IsOpen() then
             local p = Fish.Plan(shownID)
             ns.Safe(ns.AHSearch.Request, shownID, nil, p and p.baitLies or nil)
           end
