@@ -496,13 +496,21 @@ local function updateAuctionRow(row)
     if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
     cellText(cells[2]):SetText(costText or "")
     cellText(cells[3]):SetText(profitText or "")
-    -- cancelling an active auction: what the game charges (the deposit is lost besides)
+    -- cancelling an active auction loses its deposit (a sale would give it back) plus what the
+    -- game charges on top (GetCancelCost, 0 on Forever); the deposit from the logged posts
     if cells[4] then
       local text = ""
       local api = C_AuctionHouse
-      if d and d.auctionID and not isSold(d) and api and api.GetCancelCost then
-        local ok, c = pcall(api.GetCancelCost, d.auctionID)
-        if ok and c then text = c > 0 and ("|cffff6b6b-" .. ns.FormatMoney(c, true) .. "|r") or "|cff999999frei|r" end
+      if d and id and not isSold(d) then
+        local lost = 0
+        local per = ns.Profit and ns.Profit.DepositPerUnit and ns.Profit.DepositPerUnit(id)
+        if per then lost = lost + per * (d.quantity or 1) end
+        if d.auctionID and api and api.GetCancelCost then
+          local ok, c = pcall(api.GetCancelCost, d.auctionID)
+          if ok and c then lost = lost + c end
+        end
+        lost = math.floor(lost + 0.5)
+        text = lost > 0 and ("|cffff6b6b-" .. ns.FormatMoney(lost, true) .. "|r") or (per and "|cff999999frei|r" or "|cff999999?|r")
       end
       cellText(cells[4]):SetText(text)
     end

@@ -358,7 +358,7 @@ local function replay(since)
       end
     end
   end
-  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, toolProf = toolProf, lastT = lastT, craftProfs = craftProfs }
+  return items, crafted, profOf, other, bought, lost, { traded = traded, tools = tools, everBought = everBought, usedBy = usedBy, usedFree = usedFree, toolProf = toolProf, lastT = lastT, depo = depo, craftProfs = craftProfs }
 end
 
 -- The profession a bought item is material of, from the item itself: a reagent of that
@@ -516,6 +516,13 @@ local function replayAll()
 end
 
 function Profit.Invalidate() cached = nil end
+
+-- Deposit per unit of an item from its logged posts (nil without one with a known deposit).
+function Profit.DepositPerUnit(itemID)
+  local _, _, _, _, _, _, act = replayAll()
+  local d = act and act.depo and act.depo[itemID]
+  return d and d.u > 0 and d.dep / d.u or nil
+end
 
 -- Per item rows: crafted items under their profession (stock = crafted pool), TRADE rows
 -- for bought items that were sold, came back or are still there (stock = bought pool, also
