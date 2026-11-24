@@ -1057,8 +1057,13 @@ local function collectStock()
         sell and money(sell) or "–", pctText(gain, cost), gain and signed(gain) or "–" } }
     g.units, g.cost = g.units + n, g.cost + cost
     if sell then g.sell, g.gain = g.sell + sell, g.gain + gain end
-    total.units, total.cost = total.units + n, total.cost + cost
-    if sell then total.sell, total.gain = total.sell + sell, total.gain + gain end
+    -- sold (AH Transit) is gold on its way, not goods: counted apart in the balance
+    if g.key == "transit" then
+      total.transit = (total.transit or 0) + (sell or 0)
+    else
+      total.units, total.cost = total.units + n, total.cost + cost
+      if sell then total.sell, total.gain = total.sell + sell, total.gain + gain end
+    end
   end
   for _, s in ipairs(report.stock or {}) do
     local left = s.units
@@ -1092,14 +1097,17 @@ local function collectStock()
   end)
   for _, g in ipairs(order) do
     table.sort(g.items, function(a, b) return a.gain > b.gain end)
-    g.value = signed(g.gain)
+    -- AH Transit: the whole gold that comes with the mail, else the book gain
+    g.value = g.key == "transit" and money(g.sell) or signed(g.gain)
     g.values = { string.format("%d Items · %d Stück", #g.items, g.units), money(g.cost), money(g.sell),
       pctText(g.gain, g.cost), signed(g.gain) }
   end
   local gold = collectGold and collectGold()
   if gold then table.insert(order, 1, gold) end
   local cash = gold and gold.total or 0
-  return { groups = order, balance = { money(cash), money(total.cost), money(cash + total.cost), signed(total.gain) } }
+  local transit = total.transit or 0
+  return { groups = order, balance = { money(cash), money(transit), money(total.cost), money(cash + transit + total.cost),
+    signed(total.gain) } }
 end
 
 local function buildStock(page)
@@ -1108,7 +1116,7 @@ local function buildStock(page)
     groupLabels = { "Bestand", "Einkauf", "Erlös (nach Gebühr)", "Marge", "Buchgewinn" },
     itemLabels = { "Stück", "Einkauf / Stk.", "Einkauf", "Erlös / Stk.", "Erlös", "Marge", "Buchgewinn" },
     listCols = { { "Item", 20, "LEFT", 190 }, { "Stück", 245, "RIGHT" }, { "Buchgewinn", 315, "RIGHT" } },
-    balanceLabels = { "Gold", "Ware (Einkauf)", "Zusammen", "Buchgewinn Ware" },
+    balanceLabels = { "Gold", "AH Transit", "Ware (Einkauf)", "Zusammen", "Buchgewinn Ware" },
     collect = collectStock,
   })
 end
