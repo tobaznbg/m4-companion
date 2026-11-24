@@ -263,6 +263,10 @@ local function create()
   end, onShow = function() refresh() end })
   -- the hour moves items between the groups: check once a minute while open
   local acc = 0
+  -- the "Tageshandel" tab under the ledger window looks selected while this window is open
+  local function sync() if ns.TradeBook and ns.TradeBook.SyncTradeTab then ns.Safe(ns.TradeBook.SyncTradeTab) end end
+  window.frame:HookScript("OnShow", sync)
+  window.frame:HookScript("OnHide", sync)
   window.frame:HookScript("OnUpdate", function(_, dt)
     acc = acc + dt
     if acc >= 60 then acc = 0; refresh() end
@@ -275,6 +279,8 @@ function Trade.Show()
   window:SelectTab("list")
   refresh()
 end
+
+function Trade.Frame() return window and window.frame end
 
 function Trade.Toggle()
   if window and window.frame:IsShown() then window.frame:Hide() else Trade.Show() end

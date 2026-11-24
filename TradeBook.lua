@@ -1726,6 +1726,15 @@ local function onTab(key, fn)
   end
 end
 
+-- The "Tageshandel" tab under the window looks selected while the day-trading window is open.
+function TradeBook.SyncTradeTab()
+  local tab = TradeBook.tradeTab
+  if not tab then return end
+  local f = ns.DayTrade and ns.DayTrade.Frame and ns.DayTrade.Frame()
+  local fn = (f and f:IsShown()) and PanelTemplates_SelectTab or PanelTemplates_DeselectTab
+  if fn then pcall(fn, tab) end
+end
+
 local function create()
   window = ns.NativeWindow.New({ name = NAME, title = "Handelsbuch", icon = ICON })
   buildChoices(window)
@@ -1742,6 +1751,17 @@ local function create()
     build = viewed(buildAuctions), onShow = onTab("auctions", function(page) refreshPage(page); ns.Safe(TradeBook.CheckAuctions) end) })
   window:AddTab({ key = "search", title = "Marktsuche", icon = SEARCH_TAB_ICON, overview = true,
     build = viewed(buildSearch), onShow = onTab("search") })
+  -- under the window, like "Einkaufsliste" under the products window: "Tageshandel" opens the
+  -- day-trading window (DayTrade.lua, its own window, also reachable from the auction house)
+  local okT, trade = pcall(CreateFrame, "Button", "M4CompanionTradeBookDayTradeTab", window.frame, "PanelTabButtonTemplate")
+  if okT and trade then
+    trade:SetText("Tageshandel")
+    if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, trade, 0) end
+    trade:SetPoint("TOPLEFT", window.frame, "BOTTOMLEFT", 12, 2)
+    trade:SetScript("OnClick", function() if ns.DayTrade then ns.Safe(ns.DayTrade.Toggle) end end)
+    TradeBook.tradeTab = trade
+    TradeBook.SyncTradeTab()
+  end
   -- under the search: Dr. Porzellan's toilet break planner, only with "Min-Max-Optimierung" (Boxenstopp.lua)
   if ns.Boxenstopp then
     window:AddTab({ key = "boxenstopp", title = "Boxenstopp-Planer", icon = ns.Boxenstopp.ICON, overview = true,
