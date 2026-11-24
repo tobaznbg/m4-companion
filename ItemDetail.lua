@@ -1740,6 +1740,7 @@ do
       end
       if why then return Fish.Drop(true, why) end
       p.state, p.total, p.unit, p.t = "confirm", total, unitPrice, GetTime()
+      Fish.lastAnswer = nil
       if p.auto then Fish.autoMisses = 0 end
       -- the server's quote runs out after a while anyway: an unclicked one is let go
       C_Timer.After(CONFIRM_TIMEOUT, function()
