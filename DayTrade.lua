@@ -124,7 +124,8 @@ local function state(itemID, r)
   local function sell()
     s.phase = "sell"
     if not o.cheapest or o.cheapest >= ask then
-      s.text, s.color, s.post = "einstellen", GREEN, ask
+      -- at least the ask; just under a dearer cheapest offer (no money left on the table)
+      s.text, s.color, s.post = "einstellen", GREEN, o.cheapest and math.max(ask, o.cheapest - 1) or ask
     elseif o.cheapest - 1 >= floor then
       s.text, s.color, s.post = "einstellen", GOLD, o.cheapest - 1
     else
@@ -133,6 +134,10 @@ local function state(itemID, r)
   end
   if inWindow(h, sellHour) and held > 0 then
     sell()
+  elseif held > 0 and o.cheapest and o.cheapest >= ask then
+    -- dear already outside the sell window: post now, just under the cheapest (never under the ask)
+    s.phase = "sell"
+    s.text, s.color, s.post = "einstellen", GREEN, math.max(ask, o.cheapest - 1)
   elseif cheapNow then
     s.phase = "buy"
     -- the profit the capital would bring now (sorts the group, see entries)
@@ -250,7 +255,7 @@ local function cardRows(s)
       { "Erlös", s.post and money(s.held * (price * (1 - CUT) - s.dep)) or "–" },
       { "Untergrenze", money(s.floor) },
       { "Günstigster", now },
-    }, s.post and ((s.post == s.ask and GREEN or GOLD) .. string.format("Jetzt %d Stück für 2 h zu %s einstellen.|r", s.held, money(price)))
+    }, s.post and ((s.post >= s.ask and GREEN or GOLD) .. string.format("Jetzt %d Stück für 2 h zu %s einstellen.|r", s.held, money(price)))
       or (RED .. "Unterboten unter die Untergrenze – nicht einstellen.|r")
   end
   return {
