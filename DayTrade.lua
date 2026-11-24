@@ -254,15 +254,20 @@ end
 
 -- List -------------------------------------------------------------------------------------
 
-local GROUPS = { { "buy", "Jetzt kaufen" }, { "sell", "Jetzt einstellen" }, { "wait", "Später" } }
+-- "pricey": in its buy window, but the cheapest offer is above the limit - nothing to buy now
+local GROUPS = { { "buy", "Jetzt kaufen" }, { "sell", "Jetzt einstellen" }, { "pricey", "Kaufzeit, zu teuer" },
+  { "wait", "Später" } }
 
 local function entries()
   local pool = Trade.Pool()
   if not pool then return {} end
-  local byPhase = { buy = {}, sell = {}, wait = {} }
+  local byPhase = { buy = {}, sell = {}, pricey = {}, wait = {} }
   for itemID, r in pairs(pool) do
     local ok, s = pcall(state, itemID, r)
-    if ok and s then table.insert(byPhase[s.phase], s) end
+    if ok and s then
+      local over = s.phase == "buy" and s.offer.cheapest and s.offer.cheapest > s.limit
+      table.insert(byPhase[over and "pricey" or s.phase], s)
+    end
   end
   local out = {}
   for _, g in ipairs(GROUPS) do
