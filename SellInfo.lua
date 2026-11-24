@@ -319,7 +319,8 @@ end
 -- the bid column's cell template (Forever: "...AllAuctionsBid...", retail: "...AuctionsBid...")
 local BID_TEMPLATES = { AuctionHouseTableCellAllAuctionsBidTemplate = true, AuctionHouseTableCellAuctionsBidTemplate = true }
 local TEXT_TEMPLATE = "AuctionHouseTableCellTextTemplate"
-local OWN_WIDTH = 92
+local OWN_WIDTH = 82
+local CANCEL_WIDTH = 66
 SellInfo.columns = false -- true once the own columns are in the table
 
 -- Our columns sort by nothing: no arrow, no click (Blizzard's header would sort by the price).
@@ -377,8 +378,14 @@ local function wrapLayout(original)
           args[i] = TEXT_TEMPLATE
           local cost = method(tableBuilder, unpack(args, 1, n))
           local profit = method(tableBuilder, unpack(args, 1, n))
+          -- third: what cancelling costs (the game's GetCancelCost)
+          for k = 1, n do
+            if args[k] == OWN_WIDTH then args[k] = CANCEL_WIDTH break end
+          end
+          local cancel = method(tableBuilder, unpack(args, 1, n))
           plainHeader(cost, "Einkauf")
           plainHeader(profit, "Gewinn")
+          plainHeader(cancel, "Abbruch")
           replaced = true
           return silentColumn(cost)
         end
@@ -489,6 +496,16 @@ local function updateAuctionRow(row)
     if id then costText, profitText = SellInfo.AuctionValues(id, SellInfo.RowUnit(d), d.quantity) end
     cellText(cells[2]):SetText(costText or "")
     cellText(cells[3]):SetText(profitText or "")
+    -- cancelling an active auction: what the game charges (the deposit is lost besides)
+    if cells[4] then
+      local text = ""
+      local api = C_AuctionHouse
+      if d and d.auctionID and not isSold(d) and api and api.GetCancelCost then
+        local ok, c = pcall(api.GetCancelCost, d.auctionID)
+        if ok and c then text = c > 0 and ("|cffff6b6b-" .. ns.FormatMoney(c, true) .. "|r") or "|cff999999frei|r" end
+      end
+      cellText(cells[4]):SetText(text)
+    end
     if row.m4Info then row.m4Info:SetText("") end
   else
     local text
