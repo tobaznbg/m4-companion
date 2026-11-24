@@ -98,8 +98,11 @@ end)
 
 -- The realm of a character key. Since the client update of 21 Nov 2026 (Forever 1.60.1)
 -- GetRealmName() answers "" - the keys became "Lok-" and every per-character table split.
--- Then the realm this character was stored under before (the newest "Name-Realm" key of
--- db.chars with that name), else the last realm the game named (db.realm).
+-- Then, in this order: the realm this character was stored under before (the newest
+-- "Name-Realm" key of db.chars with that name); the realm of its server id (the number in the
+-- player GUID, learned from every character whose realm is known: db.realmIds); the only realm
+-- of the account's characters; the last realm the game named (db.realm). A character created
+-- after the update (no key yet) is found by the server id or the account's realm. "?" is no realm.
 local realmCache
 local function storedRealm(name)
   local db = ns.db
@@ -107,25 +110,52 @@ local function storedRealm(name)
   local best, bestT
   for key, c in pairs(db.chars or {}) do
     local n, r = key:match("^(.-)%-(.+)$")
-    if n == name and r and r ~= "" then
+    if n == name and r and r ~= "" and r ~= "?" then
       local t = type(c) == "table" and c.updated or 0
       if not best or t > bestT then best, bestT = r, t end
     end
   end
-  return best or db.realm
+  return best
+end
+
+-- The server id in the player's GUID ("Player-<server>-<id>").
+local function serverID()
+  local guid = UnitGUID and UnitGUID("player")
+  return type(guid) == "string" and guid:match("^Player%-(%d+)%-") or nil
+end
+
+-- The only realm of the account's characters, nil with none or several.
+local function onlyRealm()
+  local db, found = ns.db, nil
+  for key in pairs(db and db.chars or {}) do
+    local r = key:match("^.-%-(.+)$")
+    if r and r ~= "?" then
+      if found and found ~= r then return nil end
+      found = r
+    end
+  end
+  return found
 end
 
 local function realmName()
+  local db = ns.db
+  local sid = serverID()
+  local function learned(r)
+    realmCache = r
+    if db and sid then db.realmIds = db.realmIds or {}; db.realmIds[sid] = r end
+    return r
+  end
   local r = GetRealmName and GetRealmName()
   if type(r) == "string" and r ~= "" then
-    realmCache = r
-    if ns.db then ns.db.realm = r end
-    return r
+    if db then db.realm = r end
+    return learned(r)
   end
   if realmCache then return realmCache end
   r = storedRealm(UnitName and UnitName("player"))
-  if r then realmCache = r end
-  return r
+  if r then return learned(r) end
+  r = (db and db.realmIds and sid and db.realmIds[sid]) or onlyRealm() or (db and db.realm)
+  if r then return learned(r) end
+  return nil
 end
 
 function ns.CharKey()
@@ -138,9 +168,10 @@ end
 local function repairEmptyRealm()
   local db, Sync = ns.db, ns.CloudSync
   if not (db and Sync) then return end
+  local me = UnitName and UnitName("player")
   local function target(short)
-    local name = short:match("^(.-)%-$")
-    local r = name and storedRealm(name)
+    local name = short:match("^(.-)%-%??$")
+    local r = name and (name == me and realmName() or storedRealm(name) or onlyRealm() or db.realm)
     return r and (name .. "-" .. r) or nil
   end
   local function shortKeys(t, pattern)
@@ -149,7 +180,7 @@ local function repairEmptyRealm()
     return list
   end
   local moved = 0
-  for _, key in ipairs(shortKeys(db.ledger, "^.-%-$")) do
+  for _, key in ipairs(shortKeys(db.ledger, "^.-%-%??$")) do
     local full = target(key)
     if full then
       local src = db.ledger[key]
@@ -160,7 +191,7 @@ local function repairEmptyRealm()
       moved = moved + 1
     end
   end
-  for _, key in ipairs(shortKeys(db.chars, "^.-%-$")) do
+  for _, key in ipairs(shortKeys(db.chars, "^.-%-%??$")) do
     local full = target(key)
     if full then
       local merged = Sync.MergeChar(db.chars[full], db.chars[key])
@@ -168,7 +199,7 @@ local function repairEmptyRealm()
       db.chars[key] = nil
     end
   end
-  for _, key in ipairs(shortKeys(db.inventory, "^.-%-$")) do
+  for _, key in ipairs(shortKeys(db.inventory, "^.-%-%??$")) do
     local full = target(key)
     if full then
       local src, dst = db.inventory[key], db.inventory[full] or {}
@@ -178,15 +209,15 @@ local function repairEmptyRealm()
       db.inventory[full], db.inventory[key] = dst, nil
     end
   end
-  for _, key in ipairs(shortKeys(db.owned, "^.-%-$")) do
+  for _, key in ipairs(shortKeys(db.owned, "^.-%-%??$")) do
     local full = target(key)
     if full then
       if not db.owned[full] or (db.owned[key].t or 0) > (db.owned[full].t or 0) then db.owned[full] = db.owned[key] end
       db.owned[key] = nil
     end
   end
-  for _, key in ipairs(shortKeys(db.recipes, "^.-%-:.+$")) do
-    local short, prof = key:match("^(.-%-):(.+)$")
+  for _, key in ipairs(shortKeys(db.recipes, "^.-%-%??:.+$")) do
+    local short, prof = key:match("^(.-%-%??):(.+)$")
     local full = short and target(short)
     if full then
       local fk = full .. ":" .. prof
@@ -195,7 +226,7 @@ local function repairEmptyRealm()
     end
   end
   for _, session in ipairs(db.sessions or {}) do
-    if type(session.char) == "string" and session.char:match("^.-%-$") then session.char = target(session.char) or session.char end
+    if type(session.char) == "string" and session.char:match("^.-%-%??$") then session.char = target(session.char) or session.char end
   end
   if moved > 0 then
     print("|cff33ccffm4:|r Handelsbuch repariert: Einträge seit dem Spiel-Update (Realm fehlte) zusammengeführt.")
