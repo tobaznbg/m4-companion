@@ -774,8 +774,10 @@ end
 --     whole market into a catch).
 --   F (catch limit) = floor((M × (1 − cut) − deposit) / (1 + minGain)), deposit = vendorSell ×
 --     5 % (2 h): what is bought at F and sold again at M leaves minGain after cut and deposit.
---   K (bait) = 1c under the cheapest foreign offer, at most F − 1: undercutters orient on the
---     cheapest offer - a bait behind cheaper single units (other baits) is never seen.
+--   K (bait) = vendor price + 25 % (without one: 55 % of M), at most 1c under the cheapest foreign
+--     offer and F − 1: undercutters orient on the cheapest offer, and a bait just above the
+--     vendor price costs next to nothing when a bargain hunter takes it (the vendor would not
+--     have paid more) - the other bait setters at Schweres Leder use exactly that (1s50 -> 1s88).
 --   N: foreign units at or under F, cheapest first, as many as the rest of the day's budget pays.
 -- Returns { market, dep, limit = F, bait = K, baitLies, catch (foreign units <= F), n, sum, top
 -- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
@@ -802,7 +804,8 @@ function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
   for _, r in ipairs(list) do
     if foreign(r) > 0 then cheapest = r.unit break end
   end
-  p.limit, p.bait = limit, math.max(1, math.min(limit - 1, cheapest and cheapest - 1 or limit - 1))
+  local low = (vendorSell and vendorSell > 0) and math.ceil(vendorSell * 1.25) or math.floor(p.market * 0.55)
+  p.limit, p.bait = limit, math.max(1, math.min(limit - 1, cheapest and cheapest - 1 or limit - 1, low))
   local left, full = p.left, true
   for _, r in ipairs(list) do
     if r.unit > limit then break end
@@ -1612,7 +1615,7 @@ do
       GameTooltip:SetOwner(self, "ANCHOR_TOP")
       GameTooltip:AddLine("Köder und Fischen")
       GameTooltip:AddLine("Markt: erste Preisstufe mit " .. Detail.FISH_DEPTH .. " fremden Stück davor und darin. Fang bis: was darunter "
-        .. "gekauft wird, bringt nach Gebühr und Einstellgebühr den Mindestgewinn. Köder: 1 Stück einen Kupfer unter dem günstigsten fremden Angebot (höchstens unter der Fanggrenze).", 1, 1, 1, true)
+        .. "gekauft wird, bringt nach Gebühr und Einstellgebühr den Mindestgewinn. Köder: 1 Stück zu Händlerpreis + 25 % (höchstens 1c unter dem günstigsten fremden Angebot und unter der Fanggrenze).", 1, 1, 1, true)
       -- today's balance of the shown item
       local plan = shownID and Fish.Plan(shownID)
       local bal = shownID and Fish.Balance(shownID, plan and plan.market, plan and plan.dep)
