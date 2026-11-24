@@ -763,10 +763,65 @@ function Detail.FineSeries(id)
   return #s.t0 > 0 and s or nil
 end
 
+-- Bait and fish ("Köder und Fischen", live view of the chart window): one unit is posted just
+-- under a catch limit as bait; undercutters post their stacks a copper under it, and what others
+-- offer at or under the catch limit is bought - every post and every buy on a click of the
+-- player, the addon never posts or buys by itself. The figures come from the item's last
+-- commodity search, rows { { unit, qty, own }... } (own: the player's units in the row):
+--   M (market): the first price level at which the foreign units up to and including it reach
+--     FISH_DEPTH - a few single units in front (our own bait among them) cannot move it, a big
+--     stack at the front still counts (a level after it would overstate the market and turn the
+--     whole market into a catch).
+--   F (catch limit) = floor((M × (1 − cut) − deposit) / (1 + minGain)), deposit = vendorSell ×
+--     5 % (2 h): what is bought at F and sold again at M leaves minGain after cut and deposit.
+--   K (bait) = F − 1: undercutters then post at F or under, right in the catch.
+--   N: foreign units at or under F, cheapest first, as many as the rest of the day's budget pays.
+-- Returns { market, dep, limit = F, bait = K, baitLies, catch (foreign units <= F), n, sum, top
+-- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
+Detail.FISH_DEPTH = 20
+local FISH_CUT, FISH_DEPOSIT = 0.05, 0.05
+
+function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
+  local list = {}
+  for i, r in ipairs(rows or {}) do list[i] = r end
+  table.sort(list, function(a, b) return a.unit < b.unit end)
+  local function foreign(r) return math.max(0, (r.qty or 0) - (r.own or 0)) end
+  local p = { catch = 0, n = 0, sum = 0, left = math.max(0, (budget or 0) - (spent or 0)) }
+  local seen = 0
+  for _, r in ipairs(list) do
+    seen = seen + foreign(r)
+    if seen >= Detail.FISH_DEPTH then p.market = r.unit break end
+  end
+  if not p.market then return p end
+  p.dep = (vendorSell or 0) * FISH_DEPOSIT
+  -- the epsilon keeps a whole result whole (0.95 is not exact in binary)
+  local limit = math.floor((p.market * (1 - FISH_CUT) - p.dep) / (1 + (minGain or 0)) + 1e-6)
+  if limit < 2 then return p end
+  p.limit, p.bait = limit, limit - 1
+  local left, full = p.left, true
+  for _, r in ipairs(list) do
+    if r.unit > limit then break end
+    if (r.own or 0) > 0 and r.unit <= p.bait then p.baitLies = true end
+    local f = foreign(r)
+    p.catch = p.catch + f
+    -- a level the budget no longer pays in full is the last: every later one is dearer
+    if full and f > 0 then
+      local take = math.min(f, math.floor(left / r.unit))
+      if take > 0 then
+        p.n, p.sum, left, p.top = p.n + take, p.sum + take * r.unit, left - take * r.unit, r.unit
+      end
+      if take < f then full = false end
+    end
+  end
+  return p
+end
+
 do
   local NAME = "M4CompanionPriceChart"
-  local W, H = 900, 520
+  local W, H = 900, 560
   local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 74, 34 -- plot margins in the page
+  -- the live view's bottom margin: the bait and fish line and buttons go under the time axis
+  local BOTTOM_LIVE = 86
   local RANGES = {
     { key = "live", span = 20 * 60, button = "Live", label = "20 min" },
     { key = "today", today = true, button = "Heute", label = "heute" },
@@ -885,16 +940,18 @@ do
     return m
   end
 
-  -- A dashed horizontal line across the plot at height yy.
-  local function dashed(yy, w, rgb)
+  -- A dashed horizontal line across the plot at height yy (dashes len px every step px:
+  -- 6 / 10 by default, 2 / 5 a dotted line).
+  local function dashed(yy, w, rgb, len, step)
+    len, step = len or 6, step or 10
     local x = 0
     while x < w do
       local d = take("dash")
       d:SetColorTexture(rgb[1], rgb[2], rgb[3], 0.85)
       d:ClearAllPoints()
       d:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x, yy)
-      d:SetWidth(math.min(6, w - x))
-      x = x + 10
+      d:SetWidth(math.min(len, w - x))
+      x = x + step
     end
   end
 
@@ -981,6 +1038,406 @@ do
     b:SetText(text)
     b:SetScript("OnClick", onClick)
     return b
+  end
+
+  -- Bait and fish (live view) -------------------------------------------------------------
+  -- Session state: the rows of the shown item's last commodity search, the one price quote we
+  -- asked for (pending = { itemID, n, sum, limit, state = "asking"|"confirm"|"buying", total }),
+  -- whether the game demands a click for asking (autoBlocked). Only a quote we asked for is
+  -- ours: Blizzard's own buy dialog gets the same price events.
+  -- Figures per item in ns.db.fish = { day, spent (copper bought today, all items), items =
+  -- { [itemID] = { minGain, budget } } }; a new day starts spent at 0.
+  local Fish = {}
+  local FISH_DURATION = 1 -- 2 h in this client (Selling.lua's durations: 1 = 2 h, 2 = 8 h, 3 = 24 h)
+  local FISH_GAINS = { 0.10, 0.15, 0.20, 0.30 }
+  local FISH_BUDGETS = { 100000, 250000, 500000, 1000000 }
+  local FISH_DEFAULT = { minGain = 0.15, budget = 100000 }
+  -- seconds: no answer to a quote, an unclicked "Bestätigen", no answer to a buy, and the pause
+  -- after a dropped quote before the next one is asked by itself
+  local QUOTE_TIMEOUT, CONFIRM_TIMEOUT, BUY_TIMEOUT, COOLDOWN = 5, 30, 10, 3
+
+  function Fish.DB()
+    ns.db.fish = ns.db.fish or {}
+    local db = ns.db.fish
+    local today = date("%Y-%m-%d")
+    if db.day ~= today then db.day, db.spent = today, 0 end
+    db.spent = db.spent or 0
+    db.items = db.items or {}
+    return db
+  end
+
+  -- read only: an item gets its own entry only once a figure is changed
+  function Fish.Cfg(id)
+    return Fish.DB().items[id] or FISH_DEFAULT
+  end
+
+  function Fish.Set(id, key, value)
+    local items = Fish.DB().items
+    local c = items[id] or { minGain = FISH_DEFAULT.minGain, budget = FISH_DEFAULT.budget }
+    c[key] = value
+    items[id] = c
+    Fish.autoKey = nil -- new figures, new catch: it may be asked for again
+    ns.Safe(draw)
+  end
+
+  function Fish.Plan(id)
+    local rows = Fish.rows
+    if not (id and rows and rows.id == id) then return nil end
+    local c = Fish.Cfg(id)
+    local e = ns.Item.Get(id)
+    return Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, c.budget, Fish.DB().spent)
+  end
+
+  local function inCombat() return InCombatLockdown and InCombatLockdown() and true or false end
+  local function ahOpen() return ns.AHSearch and ns.AHSearch.IsOpen() or false end
+  local function live() return Big.IsShown() and shownID ~= nil and rangeDef().key == "live" end
+
+  -- A unit of the item in the carried bags: the location of an unlocked stack and the count.
+  function Fish.BagSlot(id)
+    local c = C_Container or {}
+    local numSlots = c.GetContainerNumSlots or GetContainerNumSlots
+    local info, idAt = c.GetContainerItemInfo, c.GetContainerItemID or GetContainerItemID
+    if not (numSlots and ItemLocation) then return nil, 0 end
+    local loc, n = nil, 0
+    for _, bag in ipairs(ns.CarriedBags()) do
+      for slot = 1, (numSlots(bag) or 0) do
+        local i = info and info(bag, slot)
+        local got = type(i) == "table" and i.itemID or (idAt and idAt(bag, slot))
+        if got == id then
+          n = n + (type(i) == "table" and i.stackCount or 1)
+          if not loc and not (type(i) == "table" and i.isLocked) then loc = ItemLocation:CreateFromBagAndSlot(bag, slot) end
+        end
+      end
+    end
+    return loc, n
+  end
+
+  -- A message in the fish button (a few seconds, while nothing else is to show) and the chat.
+  function Fish.Note(text)
+    Fish.note = { text = text, untilT = GetTime() + 6 }
+    print("|cff33ccffm4:|r Fischen: " .. text)
+  end
+
+  -- Forgets the quote (cancel: tell the server too); the next one asked by itself waits COOLDOWN.
+  function Fish.Drop(cancel, reason)
+    local p = Fish.pending
+    Fish.pending = nil
+    if cancel and p and p.state ~= "buying" and C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
+      pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+    end
+    Fish.cooldown = GetTime() + COOLDOWN
+    if reason then Fish.Note(reason) end
+    ns.Safe(Fish.Refresh)
+  end
+
+  -- Asks the server what plan.n units cost now (StartCommoditiesPurchase: a quote, no buy - the
+  -- buy is ConfirmCommoditiesPurchase on the player's click). auto: asked on a new catch without
+  -- a click; if the game blocks that (ADDON_ACTION_BLOCKED below) the quote waits for a click.
+  function Fish.Ask(plan, auto)
+    local api = C_AuctionHouse
+    if Fish.pending or not (api and api.StartCommoditiesPurchase) then return end
+    local p = { itemID = shownID, n = plan.n, sum = plan.sum, limit = plan.limit, bite = plan.baitLies,
+      state = "asking", t = GetTime(), auto = auto }
+    Fish.pending = p
+    Fish.asking = true -- our own call: the hook below must not take it for Blizzard's dialog
+    local ok = pcall(api.StartCommoditiesPurchase, p.itemID, p.n)
+    Fish.asking = false
+    if not ok then
+      if Fish.pending == p then Fish.Drop(false, "Preisanfrage nicht möglich") end
+      return
+    end
+    C_Timer.After(QUOTE_TIMEOUT, function()
+      if Fish.pending ~= p or p.state ~= "asking" then return end
+      Fish.pending = nil
+      Fish.cooldown = GetTime() + COOLDOWN
+      if auto then
+        -- a quote asked without a click that is silently dropped twice: ask on clicks from now
+        Fish.autoMisses = (Fish.autoMisses or 0) + 1
+        if Fish.autoMisses >= 2 then Fish.autoBlocked = true end
+      else
+        Fish.Note("keine Preisantwort – nochmal klicken")
+      end
+      ns.Safe(Fish.Refresh)
+    end)
+  end
+
+  -- The fish button (click or "/click M4CompanionFishButton"): confirms a quote, else asks for one.
+  function Fish.Click()
+    if inCombat() or not (ahOpen() and live()) then return end
+    local p = Fish.pending
+    if p then
+      if p.state == "confirm" and p.itemID == shownID then
+        -- the budget once more: another buy may have counted since the quote
+        if Fish.DB().spent + p.total > Fish.Cfg(p.itemID).budget then
+          return Fish.Drop(true, "Tagesbudget reicht nicht mehr")
+        end
+        p.state, p.t = "buying", GetTime()
+        local ok = pcall(C_AuctionHouse.ConfirmCommoditiesPurchase, p.itemID, p.n)
+        if not ok then return Fish.Drop(false, "Kauf nicht möglich") end
+        C_Timer.After(BUY_TIMEOUT, function()
+          if Fish.pending == p and p.state == "buying" then Fish.Drop(false, "keine Antwort auf den Kauf") end
+        end)
+      end
+      return Fish.Refresh()
+    end
+    local plan = Fish.Plan(shownID)
+    if plan and plan.n > 0 then Fish.Ask(plan, false) end
+    Fish.Refresh()
+  end
+
+  -- The bait button: one unit at K for 2 h. The ledger books the post through its own hook.
+  function Fish.Bait()
+    local api = C_AuctionHouse
+    if inCombat() or not (ahOpen() and live() and api and api.PostCommodity) then return end
+    local plan = Fish.Plan(shownID)
+    if not (plan and plan.bait) or plan.baitLies then return end
+    local loc = Fish.BagSlot(shownID)
+    if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then Fish.baitSent = GetTime() end
+    Fish.Refresh()
+  end
+
+  function Fish.Menu(owner)
+    local id = shownID
+    if not id then return end
+    if MenuUtil and MenuUtil.CreateContextMenu then
+      MenuUtil.CreateContextMenu(owner, function(_, root)
+        root:CreateTitle("Mindestgewinn")
+        for _, g in ipairs(FISH_GAINS) do
+          root:CreateRadio(math.floor(g * 100 + 0.5) .. " %", function() return math.abs(Fish.Cfg(id).minGain - g) < 1e-6 end,
+            function() Fish.Set(id, "minGain", g) end)
+        end
+        root:CreateDivider()
+        root:CreateTitle("Tagesbudget (alle Fänge des Tages)")
+        for _, b in ipairs(FISH_BUDGETS) do
+          root:CreateRadio(money(b), function() return Fish.Cfg(id).budget == b end, function() Fish.Set(id, "budget", b) end)
+        end
+      end)
+    else
+      -- no menu API: a right click steps through the minimum gains
+      local cur, nextG = Fish.Cfg(id).minGain, FISH_GAINS[1]
+      for k, g in ipairs(FISH_GAINS) do
+        if math.abs(cur - g) < 1e-6 then nextG = FISH_GAINS[k % #FISH_GAINS + 1] end
+      end
+      Fish.Set(id, "minGain", nextG)
+    end
+  end
+
+  -- enabled / glowing look of a bait or fish button, both button kinds (template or flat)
+  local function look(b, enabled, glow, text, tip)
+    local fs = rawget(b, "label")
+    if fs then fs:SetText(text) else b:SetText(text) end
+    b.m4tip = tip
+    if enabled then b:Enable() else b:Disable() end
+    if enabled then
+      setActive(b, glow)
+    else
+      if b.UnlockHighlight then b:UnlockHighlight() end
+      fs = fs or (b.GetFontString and b:GetFontString())
+      if fs then fs:SetTextColor(0.5, 0.5, 0.5) end
+    end
+  end
+
+  -- Line and buttons from the shown item's last search; also drops a quote that no longer
+  -- belongs to what is shown (other item, other range).
+  function Fish.Refresh()
+    if not (ui and ui.fishLine) then return end
+    local on = live()
+    ui.fishLine:SetShown(on)
+    ui.bait:SetShown(on)
+    ui.fishBtn:SetShown(on)
+    local p = Fish.pending
+    if p and p.state ~= "buying" and (not on or p.itemID ~= shownID) then return Fish.Drop(true) end
+    ui.fishBtn.blink = false
+    if not on then return end
+    local id, now = shownID, GetTime()
+    local db, c = Fish.DB(), Fish.Cfg(id)
+    local plan = Fish.Plan(id)
+    local open, combat = ahOpen(), inCombat()
+    local G, M = "|cffffd100", ns.Style.MUTED
+    -- the figures
+    local parts = {}
+    if plan and plan.market then
+      parts[#parts + 1] = G .. "Markt|r " .. money(plan.market)
+      if plan.limit then
+        parts[#parts + 1] = string.format("%sFang bis|r %s %s(+%d %%)|r", G, money(plan.limit), M, math.floor(c.minGain * 100 + 0.5))
+        parts[#parts + 1] = G .. "Köder|r " .. money(plan.bait) .. " " .. (plan.baitLies and "|cff73adffliegt|r" or (M .. "–|r"))
+      else
+        parts[#parts + 1] = M .. "keine Fanggrenze (Markt zu billig für den Mindestgewinn)|r"
+      end
+    elseif not open then
+      parts[#parts + 1] = M .. "Markt – nur am Auktionshaus|r"
+    elseif plan then
+      parts[#parts + 1] = M .. "Markt – unter " .. Detail.FISH_DEPTH .. " fremden Stück im Angebot|r"
+    else
+      parts[#parts + 1] = M .. "Markt – Suche läuft|r"
+    end
+    parts[#parts + 1] = G .. "Budget|r " .. money(db.spent) .. " / " .. money(c.budget)
+    ui.fishLine.text:SetText(table.concat(parts, "  ·  "))
+    -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
+    local lies = plan and plan.baitLies or false
+    if Fish.baitWas and Fish.baitWas.id == id and Fish.baitWas.lies and not lies then Fish.baitFlash = now + 3 end
+    Fish.baitWas = { id = id, lies = lies }
+    local loc, have = Fish.BagSlot(id)
+    local text = plan and plan.bait and ("Köder setzen (" .. money(plan.bait) .. ")") or "Köder setzen"
+    if not open then
+      look(ui.bait, false, false, text, "nur am Auktionshaus")
+    elseif combat then
+      look(ui.bait, false, false, text, "nicht im Kampf")
+    elseif not (plan and plan.bait) then
+      look(ui.bait, false, false, text, "noch keine Fanggrenze")
+    elseif lies then
+      look(ui.bait, false, false, "Köder liegt (" .. money(plan.bait) .. ")", "Ein eigenes Stück zu höchstens " .. money(plan.bait) .. " ist im Angebot.")
+    elseif have == 0 then
+      look(ui.bait, false, false, "kein Stück in den Taschen", "kein Stück in den Taschen")
+    elseif not loc then
+      look(ui.bait, false, false, text, "das Stück ist gerade gesperrt")
+    elseif Fish.baitSent and now - Fish.baitSent < 5 then
+      look(ui.bait, false, false, "Köder wird eingestellt …", nil) -- until the next search shows it
+    else
+      look(ui.bait, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, text,
+        "1 Stück zu " .. money(plan.bait) .. " für 2 h einstellen (Gebühr etwa " .. money(plan.dep) .. ")")
+    end
+    -- fish: a bite (a catch while our bait lies) blinks
+    local note = Fish.note and now < Fish.note.untilT and Fish.note.text or nil
+    local bite = plan and plan.baitLies and plan.n > 0
+    if p and p.itemID == id then
+      if p.state == "asking" then
+        look(ui.fishBtn, false, false, "Preis wird angefragt …", nil)
+      elseif p.state == "confirm" then
+        look(ui.fishBtn, true, true, (p.bite and "Biss! " or "") .. "Bestätigen " .. money(p.total),
+          string.format("%d Stück für %s kaufen (Plan %s)", p.n, money(p.total), money(p.sum)))
+        ui.fishBtn.blink = p.bite
+      else
+        look(ui.fishBtn, false, false, "Kauf läuft …", nil)
+      end
+    elseif not open then
+      look(ui.fishBtn, false, false, "Fischen", "nur am Auktionshaus")
+    elseif combat then
+      look(ui.fishBtn, false, false, "Fischen", "nicht im Kampf")
+    elseif plan and plan.n > 0 then
+      look(ui.fishBtn, true, true, string.format("%sKaufen: %d × bis %s = %s", bite and "Biss! " or "", plan.n, money(plan.top), money(plan.sum)),
+        Fish.autoBlocked and "Klick fragt den Preis an, der zweite Klick kauft" or "Klick fragt den Preis an")
+      ui.fishBtn.blink = bite
+    elseif plan and plan.catch > 0 then
+      look(ui.fishBtn, false, false, note or "Fischen: Tagesbudget erreicht", "Rechtsklick auf die Zeile darüber: Budget")
+    else
+      look(ui.fishBtn, false, false, note or "Fischen: — kein Fang —", nil)
+    end
+  end
+
+  -- Every commodity search of the shown item (ours every second, the sniper's, Blizzard's):
+  -- read the rows and, on a catch, ask for its price right here - so the button shows
+  -- "Bestätigen" before a competitor's click, and one click buys.
+  local function readRows(itemID)
+    local api = C_AuctionHouse
+    local list = {}
+    for i = 1, (api.GetNumCommoditySearchResults(itemID) or 0) do
+      local r = api.GetCommoditySearchResultInfo(itemID, i)
+      if r and r.unitPrice and r.unitPrice > 0 then
+        local q = r.quantity or 0
+        local own = r.containsOwnerItem and math.min(q, math.max(1, r.numOwnerItems or 0)) or 0
+        list[#list + 1] = { unit = r.unitPrice, qty = q, own = own }
+      end
+    end
+    return list
+  end
+
+  function Fish.OnResults(itemID)
+    local api = C_AuctionHouse
+    if not (itemID and itemID == shownID and api and api.GetNumCommoditySearchResults) then return end
+    Fish.rows = { id = itemID, list = readRows(itemID) }
+    if not live() then return end
+    local plan = Fish.Plan(itemID)
+    local fang = plan and plan.n > 0 or false
+    if fang and Fish.hadFang ~= itemID and PlaySound then
+      -- a bite while our bait lies: the loud one
+      pcall(PlaySound, SOUNDKIT and (plan.baitLies and SOUNDKIT.RAID_WARNING or SOUNDKIT.AUCTION_WINDOW_OPEN)
+        or (plan.baitLies and 8959 or 5274))
+    end
+    Fish.hadFang = fang and itemID or nil
+    if not fang then Fish.autoKey = nil end
+    if fang and not Fish.pending and not Fish.autoBlocked and not inCombat() and ahOpen()
+        and GetTime() >= (Fish.cooldown or 0) then
+      -- the same catch is asked for once: after a dropped quote only a click asks again
+      local key = itemID .. ":" .. plan.n .. ":" .. plan.sum
+      if key ~= Fish.autoKey then
+        Fish.autoKey = key
+        Fish.Ask(plan, true)
+      end
+    end
+    Fish.Refresh()
+  end
+
+  if ns.On then
+    ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(_, itemID) Fish.OnResults(itemID) end)
+    ns.On("COMMODITY_PRICE_UPDATED", function(_, unitPrice, total)
+      local p = Fish.pending
+      if not (p and p.state == "asking") then return end -- not ours: Blizzard's buy dialog
+      total = tonumber(total)
+      local why
+      if not total then
+        why = "kein Preis erhalten"
+      elseif total > p.sum * 1.01 then
+        why = "Preis gestiegen: " .. money(total) .. " statt " .. money(p.sum)
+      elseif total > p.n * p.limit then
+        why = "über der Fanggrenze: " .. money(total) .. " für " .. p.n .. " Stück"
+      elseif Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
+        why = "Tagesbudget reicht nicht: " .. money(total)
+      end
+      if why then return Fish.Drop(true, why) end
+      p.state, p.total, p.unit, p.t = "confirm", total, unitPrice, GetTime()
+      if p.auto then Fish.autoMisses = 0 end
+      -- the server's quote runs out after a while anyway: an unclicked one is let go
+      C_Timer.After(CONFIRM_TIMEOUT, function()
+        if Fish.pending == p and p.state == "confirm" then Fish.Drop(true, "nicht bestätigt – Anfrage verworfen") end
+      end)
+      Fish.Refresh()
+    end)
+    ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
+      local p = Fish.pending
+      if p and p.state == "asking" then Fish.Drop(false, "Preis nicht verfügbar – Angebot weg") end
+    end)
+    ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
+      local p = Fish.pending
+      if not (p and p.state == "buying") then return end
+      Fish.pending = nil
+      local db = Fish.DB()
+      db.spent = db.spent + (p.total or 0) -- the ledger books the buy itself (Ledger.lua hooks)
+      Fish.cooldown = GetTime() + COOLDOWN
+      Fish.autoKey = nil
+      Fish.Note(string.format("gekauft: %d Stück für %s", p.n, money(p.total or 0)))
+      ns.Safe(draw)
+    end)
+    ns.On("COMMODITY_PURCHASE_FAILED", function()
+      if Fish.pending then Fish.Drop(false, "Kauf fehlgeschlagen – Angebot abgelaufen oder weg") end
+    end)
+    -- the game demands a click for the quote: ask on clicks for the rest of the session
+    local function blocked(_, addon, fn)
+      if addon ~= ADDON or type(fn) ~= "string" or not fn:find("StartCommoditiesPurchase") then return end
+      if not Fish.autoBlocked then Fish.Note("das Spiel verlangt einen Klick für die Preisanfrage – ab jetzt zwei Klicks") end
+      Fish.autoBlocked = true
+      local p = Fish.pending
+      if p and p.state == "asking" then
+        Fish.pending = nil
+        Fish.cooldown = GetTime() + COOLDOWN
+      end
+      ns.Safe(Fish.Refresh)
+    end
+    ns.On("ADDON_ACTION_BLOCKED", blocked)
+    ns.On("ADDON_ACTION_FORBIDDEN", blocked)
+    ns.On("AUCTION_HOUSE_CLOSED", function()
+      Fish.pending, Fish.rows, Fish.hadFang, Fish.autoKey, Fish.baitWas = nil, nil, nil, nil, nil
+      ns.Safe(Fish.Refresh)
+    end)
+  end
+  -- Someone else (Blizzard's buy dialog) asks for a quote: the next price events are theirs.
+  if C_AuctionHouse and type(C_AuctionHouse.StartCommoditiesPurchase) == "function" and hooksecurefunc then
+    hooksecurefunc(C_AuctionHouse, "StartCommoditiesPurchase", function()
+      if not Fish.asking and Fish.pending and Fish.pending.state ~= "buying" then
+        Fish.pending = nil
+        ns.Safe(Fish.Refresh)
+      end
+    end)
   end
 
   local function buildPage(page)
@@ -1072,6 +1529,73 @@ do
       self:SetScript("OnUpdate", nil)
       hover(nil)
     end)
+    -- bait and fish (live view only): the figures, under them the two buttons
+    local fl = CreateFrame("Button", nil, page)
+    fl:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT, 34)
+    fl:SetPoint("RIGHT", page, "RIGHT", -6, 0)
+    fl:SetHeight(16)
+    fl.text = label(fl, "GameFontHighlightSmall")
+    fl.text:SetAllPoints()
+    fl.text:SetJustifyH("LEFT")
+    fl:RegisterForClicks("RightButtonUp")
+    fl:SetScript("OnClick", function(self) ns.Safe(Fish.Menu, self) end)
+    fl:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine("Köder und Fischen")
+      GameTooltip:AddLine("Markt: erste Preisstufe mit " .. Detail.FISH_DEPTH .. " fremden Stück davor und darin. Fang bis: was darunter "
+        .. "gekauft wird, bringt nach Gebühr und Einstellgebühr den Mindestgewinn. Köder: 1 Stück einen Kupfer unter der Fanggrenze.", 1, 1, 1, true)
+      GameTooltip:AddLine("Rechtsklick: Mindestgewinn und Tagesbudget", 0.6, 0.6, 0.62)
+      GameTooltip:Show()
+    end)
+    fl:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    fl:Hide()
+    ui.fishLine = fl
+    ui.bait = button(page, "Köder setzen", 230, function() ns.Safe(Fish.Bait) end)
+    ui.bait:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT, 6)
+    -- the fish button has a global name: a macro "/click M4CompanionFishButton" puts it on a key
+    local ok, fb = pcall(CreateFrame, "Button", "M4CompanionFishButton", page, "UIPanelButtonTemplate")
+    if ok and fb then
+      fb:SetSize(340, 22)
+      fb:SetText("Fischen")
+    else
+      fb = ns.Style.Button(page, "Fischen", 340, 22)
+      _G.M4CompanionFishButton = fb
+    end
+    -- Acts on the press: a mouse click comes as down and up, /click as one of the two (the
+    -- game's "ActionButtonUseKeyDown" decides) - an up right after an acted down is the same
+    -- press and must not act again (it could confirm a quote that just came in).
+    fb:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
+    fb:SetScript("OnClick", function(self, _, down)
+      if down then
+        self.downSeen = true
+      elseif self.downSeen then
+        self.downSeen = false
+        return
+      end
+      ns.Safe(Fish.Click)
+    end)
+    fb:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -RIGHT, 6)
+    -- a bite blinks
+    fb:SetScript("OnUpdate", function(self, elapsed)
+      if not self.blink then return end
+      self.blinkT = (self.blinkT or 0) + elapsed
+      if self.blinkT < 0.3 then return end
+      self.blinkT = 0
+      self.blinkOn = not self.blinkOn
+      setActive(self, self.blinkOn)
+    end)
+    ui.fishBtn = fb
+    for _, b in ipairs({ ui.bait, fb }) do
+      if b.SetMotionScriptsWhileDisabled then b:SetMotionScriptsWhileDisabled(true) end -- the reason shows on grey
+      b:HookScript("OnEnter", function(self)
+        if not self.m4tip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(self.m4tip, 1, 1, 1, true)
+        GameTooltip:Show()
+      end)
+      b:HookScript("OnLeave", function() GameTooltip:Hide() end)
+      b:Hide()
+    end
   end
 
   -- The time axis: day changes (line, weekday and date) and hour marks (every 3, 6 or 12
@@ -1258,8 +1782,18 @@ do
       local d = date("*t", axisEnd)
       span = math.max(3600, axisEnd - time({ year = d.year, month = d.month, day = d.day, hour = 0 }))
     end
-    local w, h = ui.plot:GetWidth(), ui.plot:GetHeight()
-    if not w or w < 50 then w, h = W - 16 - LEFT - RIGHT, H - 68 - TOP - BOTTOM end -- before the first layout
+    -- the live view makes room under the axis for bait and fish; the height follows from the
+    -- page (the plot's own rect is only updated on the next layout)
+    local fishing = rng.key == "live"
+    local bottomMargin = fishing and BOTTOM_LIVE or BOTTOM
+    if ui.bottomMargin ~= bottomMargin then
+      ui.bottomMargin = bottomMargin
+      ui.plot:SetPoint("BOTTOMRIGHT", -RIGHT, bottomMargin)
+    end
+    local w, ph = ui.plot:GetWidth(), ui.page:GetHeight()
+    local h = (ph and ph > 100) and (ph - TOP - bottomMargin) or (H - 68 - TOP - bottomMargin)
+    if not w or w < 50 then w = W - 16 - LEFT - RIGHT end -- before the first layout
+    local plan = fishing and Fish.Plan(id) or nil
     local pool = ns.DayTrade and ns.DayTrade.Pool and ns.DayTrade.Pool()
     local v = { id = id, e = e, series = series, axisStart = axisEnd - span, axisEnd = axisEnd, span = span,
       w = w, h = h, vis = {}, tail = {}, rhythm = pool and pool[id] or nil }
@@ -1291,6 +1825,7 @@ do
     end
     drawHead(id, e, values, rng)
     ui.live:SetText(liveText(id))
+    Fish.Refresh()
     -- legend and resolution
     local r = v.rhythm
     local legend = "|cffffd100günstigstes Angebot|r   |cffb0b0b0Menge (Balken)|r   |cffffffffR = Marktwert|r"
@@ -1323,6 +1858,8 @@ do
       end
     end
     lo, hi = lo or values[1], hi or values[1]
+    -- live: catch limit and bait in the scale, the gap between them and the market is the point
+    if plan and plan.limit then lo, hi = math.min(lo, plan.bait), math.max(hi, plan.limit) end
     local limit, ask = r and r[3], r and r[4]
     -- the scale follows the prices of the range only (else far reference lines flatten the
     -- curve); R, buy limit and target outside it become arrows on the edge
@@ -1458,6 +1995,13 @@ do
       local arrow = edge(ask)
       if not arrow then dashed(py(ask), w, SELL_RGB) end
       labels[#labels + 1] = { y = py(ask), text = "Ziel " .. money(ask) .. (arrow or ""), rgb = SELL_RGB }
+    end
+    -- bait and fish: catch limit green dashed, bait blue dotted
+    if plan and plan.limit then
+      dashed(py(plan.limit), w, BUY_RGB)
+      labels[#labels + 1] = { y = py(plan.limit), text = "Fang " .. money(plan.limit), rgb = BUY_RGB }
+      dashed(py(plan.bait), w, SELL_RGB, 2, 5)
+      labels[#labels + 1] = { y = py(plan.bait), text = "Köder " .. money(plan.bait), rgb = SELL_RGB }
     end
     -- the price now as a marker on the right edge
     if e.now and e.now > 0 then
@@ -1599,7 +2143,13 @@ do
       end
       if not liveTicker and C_Timer and C_Timer.NewTicker then
         liveTicker = C_Timer.NewTicker(1, function()
-          if shownID and ns.AHSearch and ns.AHSearch.IsOpen() then ns.Safe(ns.AHSearch.Request, shownID) end
+          -- no search while a quote of ours is open (its answer comes first); while our bait
+          -- lies the item goes ahead of other queued searches (a bite must be seen at once) -
+          -- AHSearch still keeps the game's pace
+          if shownID and not Fish.pending and ns.AHSearch and ns.AHSearch.IsOpen() then
+            local p = Fish.Plan(shownID)
+            ns.Safe(ns.AHSearch.Request, shownID, nil, p and p.baitLies or nil)
+          end
         end)
       end
     end)
@@ -1607,6 +2157,7 @@ do
       if ticker then ticker:Cancel(); ticker = nil end
       if liveTicker then liveTicker:Cancel(); liveTicker = nil end
       if hover then hover(nil) end
+      if Fish.pending and Fish.pending.state ~= "buying" then Fish.Drop(true) end
       ns.Safe(Detail.UpdateDetailsButton)
     end)
     win:AddTab({ key = "chart", title = "Preisverlauf", hidden = true, build = buildPage })
