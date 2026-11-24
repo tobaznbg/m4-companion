@@ -751,42 +751,11 @@ local function attachAuctions()
       end
     end)
   end
-  -- Blizzard leaves the item for "Alle Auktionen" when the own auctions update and it does not
-  -- find the item among them at that moment (even with auctions of it left): the item is chosen
-  -- again when the jump came from that update (same frame), not from a click on "Alle Auktionen".
-  local lastKey, nilT = nil, -1
-  if af.SelectItemKey then
-    hooksecurefunc(af, "SelectItemKey", function(_, itemKey) if itemKey then lastKey = itemKey end end)
-  end
   if af.SetItemKey then
     hooksecurefunc(af, "SetItemKey", function(_, itemKey)
-      if itemKey == nil then
-        nilT = GetTime()
-        if ownDetail() then ns.Safe(ns.ItemDetail.Hide) end
-      end
+      if itemKey == nil and ownDetail() then ns.Safe(ns.ItemDetail.Hide) end
     end)
   end
-  local function reselect(tries)
-    local key = lastKey
-    local api = C_AuctionHouse
-    local summary = rawget(af, "SummaryList")
-    if not (key and api and api.GetNumOwnedAuctionTypes and summary and summary.SetSelectedIndex) then return end
-    if af.GetItemKey and af:GetItemKey() then return end -- an item shows (again)
-    for i = 1, api.GetNumOwnedAuctionTypes() or 0 do
-      local k = api.GetOwnedAuctionType(i)
-      if type(k) == "table" and k.itemID == key.itemID then
-        summary:SetSelectedIndex(i + 1)
-        return
-      end
-    end
-    -- the list may still be filling: once more a moment later
-    if tries > 0 then C_Timer.After(0.3, function() ns.Safe(reselect, tries - 1) end) end
-  end
-  af:HookScript("OnEvent", function(_, event)
-    if event == "OWNED_AUCTIONS_UPDATED" and lastKey and nilT == GetTime() and af:IsVisible() then
-      C_Timer.After(0, function() ns.Safe(reselect, 3) end)
-    end
-  end)
   af:HookScript("OnHide", function() if ownDetail() then ns.Safe(ns.ItemDetail.Hide) end end)
   -- Auto refresh of an item's offers in "Auktionen": every AUTO_REFRESH seconds the list's own
   -- refresh button is pressed (only while that list shows and the button is enabled - the game
