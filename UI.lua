@@ -208,8 +208,8 @@ function UI.LiveStatus()
   print(P .. string.format("Live-Kanal %s: %s%s", ns.Live.CHANNEL,
     s.joined and "|cff5fd38dbeigetreten|r" or "|cffff6b6bnicht beigetreten|r",
     s.index and (" (Nr. " .. s.index .. ")") or ""))
-  print(string.format("  Gesendet: %d Nachrichten, %d Items · Empfangen: %d Nachrichten, %d Items übernommen",
-    s.sentMsgs, s.sentItems, s.recvMsgs, s.recvItems))
+  print(string.format("  Gesendet: %d Nachrichten, %d Items · Empfangen: %d Nachrichten, %d Items übernommen, %d Absender · eigenes Echo: %d",
+    s.sentMsgs, s.sentItems, s.recvMsgs, s.recvItems, s.senders or 0, s.echoes or 0))
   local why = {}
   for reason, n in pairs(s.reasons) do why[#why + 1] = reason .. " " .. n end
   table.sort(why)

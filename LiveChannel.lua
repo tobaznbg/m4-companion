@@ -55,7 +55,11 @@ Live.CHANNEL, Live.PREFIX = CHANNEL_NAME, PREFIX
 Live.items = {}                  -- [house][itemID] = { t, m, q, n, d, recv }
 
 local stats = { sentMsgs = 0, sentItems = 0, recvMsgs = 0, recvItems = 0, dropped = 0, droppedItems = 0,
-  suppressed = 0, throttled = 0, failed = 0, errors = 0 }
+  suppressed = 0, throttled = 0, failed = 0, errors = 0, echoes = 0 }
+-- the texts this client sent (session): the same text coming back is our own echo, whatever
+-- form the game gives the sender's name in
+local sentTexts, sentOrder = {}, {}
+local senderCount = 0
 local reasons = {}               -- reason -> count of refused messages / entries
 local sent = {}                  -- [house][itemID] = { t, m, q, n }: what this client sent
 local pending = {}               -- "house:item" -> { h, id, t, m, due, created }
@@ -332,6 +336,9 @@ local function sendOne()
   end
   local result
   if message then
+    sentTexts[message] = true
+    sentOrder[#sentOrder + 1] = message
+    if #sentOrder > 500 then sentTexts[table.remove(sentOrder, 1)] = nil end
     local ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, message, "CHANNEL", channelIndex)
     result = ok and res or "error"
     if result == "error" then stats.errors = stats.errors + 1 end
@@ -462,6 +469,7 @@ function Live.Receive(text, sender, at)
   -- rate limit per sender (session only)
   local s = senders[sender]
   if not s or at - s.start >= SENDER_WINDOW then
+    if not s then senderCount = senderCount + 1 end
     s = { start = at, count = 0 }
     senders[sender] = s
   end
@@ -490,7 +498,11 @@ end
 
 local function onAddon(_, prefix, text, distribution, sender, _, _, localID, name)
   if prefix ~= PREFIX or distribution ~= "CHANNEL" then return end
-  if isMe(sender) or not ourChannel(localID, name) then return end
+  if not ourChannel(localID, name) then return end
+  if isMe(sender) or sentTexts[text] then
+    stats.echoes = stats.echoes + 1
+    return
+  end
   local ok, accepted, reason = pcall(Live.Receive, text, sender or "?")
   stats.recvMsgs = stats.recvMsgs + 1
   if not ok then
@@ -573,7 +585,7 @@ function Live.Stats()
     houses = houses + 1
     for _ in pairs(items) do entries = entries + 1 end
   end
-  r.houses, r.entries = houses, entries
+  r.houses, r.entries, r.senders = houses, entries, senderCount
   r.reasons = {}
   for k, v in pairs(reasons) do r.reasons[k] = v end
   r.combat = InCombatLockdown and InCombatLockdown() or false
