@@ -2,7 +2,8 @@
 -- bought in the cheap window and posted (2 h) in the dear one.
 --
 -- The pool comes from the cloud (collector ahrhythm.py, hourly with the house data):
---   ns.AHData[house].rhythm = { [itemID] = { buyHour, sellHour, buyLimit, ask, maxQty, profitDay } }
+--   ns.AHData[house].rhythm = { [itemID] = { buyHour, sellHour, buyLimit, ask, maxQty, profitDay, avail } }
+-- (avail: units usually on offer at or under buyLimit in the buy window, median of 4 days; from 24 Nov 2026)
 -- windows are 3 hours from buyHour / sellHour (Berlin time = the PC's clock), buyLimit and ask in
 -- copper per unit. The cloud only sets these parameters; what is on offer right now is the
 -- newest observation Item.Get knows, updated at once on an own search or scan:
@@ -98,14 +99,15 @@ function Trade.Plan(s, capital)
     return qty, cost, qty * net - cost, false
   end
   if not o.cheapest or o.cheapest > s.limit then return 0, 0, 0, false end
-  qty = math.min(s.maxQty, math.floor(capital / o.cheapest))
+  -- no levels: no more than usually is on offer under the limit in the buy window
+  qty = math.min(s.maxQty, s.avail or s.maxQty, math.floor(capital / o.cheapest))
   cost = qty * o.cheapest
   return qty, cost, qty * net - cost, true
 end
 
 -- The state of one pool item now: { phase = "buy"|"sell"|"wait", text, color, … }.
 local function state(itemID, r)
-  local buyHour, sellHour, limit, ask, maxQty, profitDay = r[1], r[2], r[3], r[4], r[5], r[6]
+  local buyHour, sellHour, limit, ask, maxQty, profitDay, avail = r[1], r[2], r[3], r[4], r[5], r[6], r[7]
   local h = tonumber(date("%H"))
   local o = offer(itemID, limit)
   local held = ns.ShoppingList and ns.ShoppingList.Holdings and ns.ShoppingList.Holdings(itemID) or 0
@@ -114,40 +116,47 @@ local function state(itemID, r)
   -- the lowest price that still returns the buy limit after cut and deposit
   local floor = math.ceil((limit + dep) / (1 - CUT))
   local s = { itemID = itemID, buyHour = buyHour, sellHour = sellHour, limit = limit, ask = ask, maxQty = maxQty,
-    profitDay = profitDay, offer = o, held = held, dep = dep, floor = floor }
-  if inWindow(h, buyHour) then
+    profitDay = profitDay, avail = avail, offer = o, held = held, dep = dep, floor = floor }
+  -- The windows only say when it is usually cheap or dear; what counts is the price now:
+  -- an offer under the limit is a buy at any hour (the stock waits for the next sell window).
+  local cheapNow = o.cheapest and o.cheapest <= limit
+  local function sell()
+    s.phase = "sell"
+    if not o.cheapest or o.cheapest >= ask then
+      s.text, s.color, s.post = "einstellen", GREEN, ask
+    elseif o.cheapest - 1 >= floor then
+      s.text, s.color, s.post = "einstellen", GOLD, o.cheapest - 1
+    else
+      s.text, s.color = "unterboten", RED
+    end
+  end
+  if inWindow(h, sellHour) and held > 0 then
+    sell()
+  elseif cheapNow then
     s.phase = "buy"
-    if o.cheapest and o.cheapest <= limit then
-      -- the profit the capital would bring now (sorts the group, see entries)
-      local qty, _, profit = Trade.Plan(s)
-      s.profit = qty > 0 and profit or 0
-      s.text = (s.profit >= 0 and "+" or "") .. money(s.profit)
-      s.color = s.profit > 0 and GREEN or MUTED
-    elseif o.cheapest then
+    -- the profit the capital would bring now (sorts the group, see entries)
+    local qty, _, profit = Trade.Plan(s)
+    s.profit = qty > 0 and profit or 0
+    s.text = (s.profit >= 0 and "+" or "") .. money(s.profit)
+    s.color = s.profit > 0 and GREEN or MUTED
+  elseif inWindow(h, buyHour) then
+    s.phase = "buy"
+    if o.cheapest then
       s.text, s.color = "zu teuer", RED
     else
       s.text, s.color = "Kaufzeit", GOLD
     end
   elseif inWindow(h, sellHour) then
     s.phase = "sell"
-    if held > 0 then
-      if not o.cheapest or o.cheapest >= ask then
-        s.text, s.color, s.post = "einstellen", GREEN, ask
-      elseif o.cheapest - 1 >= floor then
-        s.text, s.color, s.post = "einstellen", GOLD, o.cheapest - 1
-      else
-        s.text, s.color = "unterboten", RED
-      end
-    else
-      s.text, s.color = "Verkaufszeit", MUTED
-    end
+    s.text, s.color = "Verkaufszeit", MUTED
   else
     local wait = hoursUntil(h, buyHour)
     s.phase = "wait"
     s.wait = wait
     -- expected profit with the capital: the cloud's per-unit profit (profitDay / maxQty, already
-    -- weighted with how often the rhythm held) for the units the capital buys at the limit
-    local qty = math.min(maxQty, math.floor(CAPITAL / math.max(limit, 1)))
+    -- weighted with how often the rhythm held) for the units the capital buys at the limit, no
+    -- more than usually is on offer there
+    local qty = math.min(maxQty, avail or maxQty, math.floor(CAPITAL / math.max(limit, 1)))
     s.profit = maxQty > 0 and qty * profitDay / maxQty or 0
     s.text, s.color = string.format("+%s · %d Uhr", money(s.profit), buyHour), MUTED
   end
@@ -169,7 +178,7 @@ Trade.CUT, Trade.Ago, Trade.CAPITAL = CUT, ago, CAPITAL
 -- Card -------------------------------------------------------------------------------------
 
 local LABELS = { "Kaufzeit", "Kaufgrenze", "Einstellzeit", "Zielpreis (2 h)", "Untergrenze", "Höchstens / Tag",
-  "Erwartet / Tag", "Günstigster jetzt", "Stück ≤ Grenze", "Im Haushalt" }
+  "Üblich ≤ Grenze", "Erwartet / Tag", "Günstigster jetzt", "Stück ≤ Grenze", "Im Haushalt" }
 
 local function card(c)
   local NW = ns.NativeWindow
@@ -223,6 +232,7 @@ local function show(entry, c)
     money(s.ask),
     money(s.floor),
     tostring(s.maxQty),
+    s.avail and tostring(s.avail) or (MUTED .. "unbekannt|r"),
     money(s.profitDay),
     o.cheapest and (money(o.cheapest) .. MUTED .. "  " .. o.source .. ", " .. ago(o.t) .. "|r") or "–",
     o.units and ((o.atLeast and "≥ " or "") .. o.units) or (MUTED .. "unbekannt|r"),
@@ -233,6 +243,7 @@ local function show(entry, c)
   if s.phase == "buy" then
     if o.cheapest and o.cheapest <= s.limit then
       advice = GREEN .. string.format("Jetzt kaufen: bis %s je Stück, höchstens %d Stück.|r", money(s.limit), s.maxQty)
+        .. MUTED .. string.format("\nEinstellen %s zu %s.|r", windowText(s.sellHour), money(s.ask))
     elseif o.cheapest then
       advice = RED .. "Gerade zu teuer – nichts über der Kaufgrenze kaufen.|r"
     else
