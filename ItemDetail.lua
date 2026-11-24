@@ -1619,7 +1619,53 @@ do
     Fish.Refresh()
   end
 
+  -- Measuring log (ns.db.fishTrace, read from the saved variables afterwards): every auction
+  -- house step with a precise time while the live view is open at the auction house - searches
+  -- sent (also Blizzard's own) and answered, the throttle's state, clicks with the button's text,
+  -- price asks and answers, confirms, purchases, posts and every error text. At most TRACE_MAX
+  -- entries (the oldest go). { t = seconds (precise), w = time(), e = event, ... }
+  local TRACE_MAX = 20000
+  local clockNow = GetTimePreciseSec or GetTime
+  function Fish.Trace(event, a, b, c, d)
+    if not (live() and ahOpen()) then return end
+    ns.db.fishTrace = ns.db.fishTrace or {}
+    local log = ns.db.fishTrace
+    log[#log + 1] = { t = clockNow(), w = time(), e = event, a = a, b = b, c = c, d = d }
+    if #log > TRACE_MAX then table.remove(log, 1) end
+  end
+  do
+    local api = C_AuctionHouse
+    local function hook(name, fn)
+      if api and type(api[name]) == "function" and hooksecurefunc then
+        hooksecurefunc(api, name, function(...) ns.Safe(fn, ...) end)
+      end
+    end
+    local function keyID(k) return type(k) == "table" and k.itemID or k end
+    hook("SendSearchQuery", function(itemKey) Fish.Trace("search_sent", keyID(itemKey)) end)
+    hook("SendBrowseQuery", function() Fish.Trace("browse_sent") end)
+    hook("StartCommoditiesPurchase", function(id, n) Fish.Trace("ask_sent", id, n, Fish.pending and Fish.pending.blind and "probe" or "catch") end)
+    hook("ConfirmCommoditiesPurchase", function(id, n) Fish.Trace("confirm_sent", id, n) end)
+    hook("CancelCommoditiesPurchase", function() Fish.Trace("cancel_sent") end)
+    hook("PostCommodity", function(_, dur, n, price) Fish.Trace("post_sent", n, price, dur) end)
+  end
   if ns.On then
+    ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(_, itemID)
+      local api = C_AuctionHouse
+      local first = api.GetNumCommoditySearchResults and (api.GetNumCommoditySearchResults(itemID) or 0) > 0
+        and api.GetCommoditySearchResultInfo(itemID, 1) or nil
+      Fish.Trace("results", itemID, api.GetNumCommoditySearchResults and api.GetNumCommoditySearchResults(itemID) or 0,
+        first and first.unitPrice, first and (first.containsOwnerItem and 1 or 0))
+    end)
+    for _, ev in ipairs({ "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED",
+        "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", "AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED",
+        "COMMODITY_PRICE_UNAVAILABLE", "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED",
+        "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN" }) do
+      -- not every client knows every event: an unknown one must not break the load
+      pcall(ns.On, ev, function(_, a, b) Fish.Trace(ev:lower(), a, b) end)
+    end
+    ns.On("COMMODITY_PRICE_UPDATED", function(_, unit, total) Fish.Trace("price", unit, total) end)
+    ns.On("AUCTION_HOUSE_SHOW_ERROR", function(_, code) Fish.Trace("ah_error", code) end)
+    ns.On("UI_ERROR_MESSAGE", function(_, a, b) Fish.Trace("ui_error", a, b) end)
     ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(_, itemID) Fish.OnResults(itemID) end)
     ns.On("COMMODITY_PRICE_UPDATED", function(_, unitPrice, total)
       local p = Fish.pending
@@ -1892,6 +1938,7 @@ do
         self.downSeen = false
         return
       end
+      Fish.Trace("click", self:GetText(), Fish.pending and Fish.pending.state or "-")
       ns.Safe(Fish.Click)
     end)
     fb:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -RIGHT, 6)
