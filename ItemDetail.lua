@@ -921,6 +921,9 @@ do
     local list = tailOf(id)
     local last = list[#list]
     if last and last.t >= e.dataT then return end
+    -- searched every second: a new point only when price or quantity moved (else the line
+    -- would fill with repeats and push the older live points out)
+    if last and last.p == (e.now or 0) and last.q == e.quantity then return end
     list[#list + 1] = { t = e.dataT, p = e.now or 0, q = e.quantity, src = e.dataSource }
     if #list > TAIL_MAX then table.remove(list, 1) end
   end
