@@ -247,6 +247,17 @@ if ns.On then
     for _, itemID in ipairs(waiting) do deliver(itemID, nil) end
     entries, queue = {}, {}
   end)
+  -- An auction house error instead of the answer (measured 24 Nov: error 10 right after a
+  -- failed purchase, then no answer - the next search came only after TIMEOUT, 7 s blind):
+  -- the search is lost, free the slot at once.
+  ns.On("AUCTION_HOUSE_SHOW_ERROR", function()
+    local e = current
+    if e and e.state == "searching" then
+      current = nil
+      deliver(e.itemID, nil)
+      schedule(0.5)
+    end
+  end)
   ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(_, itemID)
     if not current or current.itemID ~= itemID then return end
     local listings = {}
