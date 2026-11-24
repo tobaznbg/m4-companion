@@ -485,6 +485,123 @@ function SellInfo.RowUnit(d)
   return buyout
 end
 
+-- Mass cancel: a check box in each active auction's "Abbruch" cell selects it (Shift+click: every
+-- active auction of that item); the button "Auswahl abbrechen" cancels one selected auction per
+-- click (the game allows one cancel per click), the deposits of the selection in its tooltip.
+local selected = {} -- auctionID -> true
+local cancelButton
+
+-- Deposit lost by cancelling one auction (exact: recorded by id, else the logged post at its
+-- unit price) plus the game's cancel cost; nil when unknown.
+local function cancelLoss(auctionID, itemID, unit, qty)
+  local rec = auctionID and ns.db.auctionDep and ns.db.auctionDep[auctionID]
+  local per = rec and rec.d or (ns.Ledger and ns.Ledger.PostDeposit and ns.Ledger.PostDeposit(itemID, unit))
+  local api = C_AuctionHouse
+  local extra = 0
+  if auctionID and api and api.GetCancelCost then
+    local ok, c = pcall(api.GetCancelCost, auctionID)
+    if ok and c then extra = c end
+  end
+  if not per then return nil end
+  return math.floor(per * (qty or 1) + extra + 0.5)
+end
+
+-- The own active auctions now: { [auctionID] = { itemID, unit, qty } }.
+local function activeOwned()
+  local out, api = {}, C_AuctionHouse
+  if not (api and api.GetNumOwnedAuctions and api.GetOwnedAuctionInfo) then return out end
+  for i = 1, api.GetNumOwnedAuctions() or 0 do
+    local ok, a = pcall(api.GetOwnedAuctionInfo, i)
+    if ok and type(a) == "table" and a.auctionID and not isSold(a) then
+      local key = a.itemKey
+      out[a.auctionID] = { itemID = type(key) == "table" and key.itemID or nil,
+        unit = SellInfo.RowUnit(a), qty = a.quantity or 1 }
+    end
+  end
+  return out
+end
+
+local function updateCancelButton()
+  if not cancelButton then return end
+  local owned = activeOwned()
+  local n = 0
+  for id in pairs(selected) do
+    if owned[id] then n = n + 1 else selected[id] = nil end
+  end
+  cancelButton:SetText(n > 0 and string.format("Auswahl abbrechen (%d)", n) or "Auswahl abbrechen")
+  cancelButton:SetEnabled(n > 0)
+end
+
+local function cancelNext()
+  local api = C_AuctionHouse
+  if not (api and api.CancelAuction) then return end
+  local owned = activeOwned()
+  for id in pairs(selected) do
+    selected[id] = nil
+    if owned[id] and (not api.CanCancelAuction or api.CanCancelAuction(id)) then
+      api.CancelAuction(id) -- one per click (hardware event)
+      break
+    end
+  end
+  updateCancelButton()
+end
+
+local function attachCancelButton(af)
+  if cancelButton then return end
+  local blizz = rawget(af, "CancelAuctionButton")
+  local ok, b = pcall(CreateFrame, "Button", nil, af, "UIPanelButtonTemplate")
+  if not (ok and b) then return end
+  b:SetSize(170, 22)
+  if type(blizz) == "table" then b:SetPoint("RIGHT", blizz, "LEFT", -6, 0) else b:SetPoint("BOTTOMRIGHT", af, "BOTTOMRIGHT", -180, 4) end
+  b:SetScript("OnClick", function() ns.Safe(cancelNext) end)
+  b:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Ausgewählte Auktionen abbrechen")
+    local owned, n, loss, unknown = activeOwned(), 0, 0, 0
+    for id in pairs(selected) do
+      local a = owned[id]
+      if a then
+        n = n + 1
+        local l = cancelLoss(id, a.itemID, a.unit, a.qty)
+        if l then loss = loss + l else unknown = unknown + 1 end
+      end
+    end
+    GameTooltip:AddLine(string.format("%d ausgewählt · verlorene Einstellgebühren %s%s", n, ns.FormatMoney(loss, true),
+      unknown > 0 and string.format(" (+%d unbekannt)", unknown) or ""), 1, 0.71, 0.28)
+    GameTooltip:AddLine("Ein Klick bricht eine Auktion ab (so verlangt es das Spiel).", 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine("Häkchen in der Spalte „Abbruch“; mit Shift alle eines Items.", 0.6, 0.6, 0.6, true)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  cancelButton = b
+  updateCancelButton()
+end
+
+local function checkFor(cell)
+  if cell.m4Check then return cell.m4Check end
+  local ok, c = pcall(CreateFrame, "CheckButton", nil, cell, "UICheckButtonTemplate")
+  if not (ok and c) then return nil end
+  c:SetSize(18, 18)
+  c:SetPoint("LEFT", cell, "LEFT", 0, 0)
+  c:SetScript("OnClick", function(self)
+    local id = self.auctionID
+    if not id then return end
+    local on = self:GetChecked() and true or nil
+    if IsShiftKeyDown and IsShiftKeyDown() and self.itemID then
+      for aid, a in pairs(activeOwned()) do
+        if a.itemID == self.itemID then selected[aid] = on end
+      end
+    else
+      selected[id] = on
+    end
+    updateCancelButton()
+  end)
+  cell.m4Check = c
+  return c
+end
+
+if ns.On then ns.On("OWNED_AUCTIONS_UPDATED", function() ns.Safe(updateCancelButton) end) end
+
 local probed = false
 local function updateAuctionRow(row)
   local d = rowData(row)
@@ -501,21 +618,20 @@ local function updateAuctionRow(row)
     if cells[4] then
       local text = ""
       local api = C_AuctionHouse
-      if d and id and not isSold(d) then
-        local lost = 0
-        -- exact: the deposit of this auction (recorded when it was created), else the logged post
-        -- of this item at this unit price (its deposit per unit)
-        local rec = d.auctionID and ns.db.auctionDep and ns.db.auctionDep[d.auctionID]
-        local per = rec and rec.d or (ns.Ledger and ns.Ledger.PostDeposit and ns.Ledger.PostDeposit(id, SellInfo.RowUnit(d)))
-        if per then lost = lost + per * (d.quantity or 1) end
-        if d.auctionID and api and api.GetCancelCost then
-          local ok, c = pcall(api.GetCancelCost, d.auctionID)
-          if ok and c then lost = lost + c end
-        end
-        lost = math.floor(lost + 0.5)
-        text = lost > 0 and ("|cffff6b6b-" .. ns.FormatMoney(lost, true) .. "|r") or (per and "|cff999999frei|r" or "|cff999999?|r")
+      local active = d and id and not isSold(d) and d.auctionID
+      if active then
+        local lost = cancelLoss(d.auctionID, id, SellInfo.RowUnit(d), d.quantity)
+        text = lost and (lost > 0 and ("|cffff6b6b-" .. ns.FormatMoney(lost, true) .. "|r") or "|cff999999frei|r") or "|cff999999?|r"
       end
-      cellText(cells[4]):SetText(text)
+      local fs = cellText(cells[4])
+      if fs.SetJustifyH then fs:SetJustifyH("RIGHT") end -- the check box sits left in the cell
+      fs:SetText(text)
+      local check = checkFor(cells[4])
+      if check then
+        check:SetShown(active and true or false)
+        check.auctionID, check.itemID = active and d.auctionID or nil, id
+        check:SetChecked(active and selected[d.auctionID] or false)
+      end
     end
     if row.m4Info then row.m4Info:SetText("") end
   else
@@ -606,6 +722,7 @@ local function attachAuctions()
   if type(af) ~= "table" or af.m4Rows then return end
   local layer = CreateFrame("Frame", nil, af)
   af.m4Rows = layer
+  ns.Safe(attachCancelButton, af)
   -- after Blizzard's own OnShow (which sets its layout): ours on top
   af:HookScript("OnShow", function() ns.Safe(installColumns, af) end)
   if af:IsShown() then ns.Safe(installColumns, af) end
