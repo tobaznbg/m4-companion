@@ -768,6 +768,7 @@ do
   local W, H = 900, 520
   local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 80, 34 -- plot margins in the page
   local RANGES = {
+    { key = "1h", span = 3600, button = "1 Std", label = "1 Std" },
     { key = "today", today = true, button = "Heute", label = "heute" },
     { key = "2d", span = 2 * 86400, button = "2 Tage", label = "2 Tage" },
     { key = "7d", span = 7 * 86400, button = "7 Tage", label = "7 Tage" },
@@ -920,7 +921,7 @@ do
     for _, r in ipairs(RANGES) do
       if r.key == k then return r end
     end
-    return RANGES[3] -- 7 days
+    return RANGES[4] -- 7 days
   end
 
   -- Live tail ------------------------------------------------------------------------------
@@ -1000,7 +1001,7 @@ do
     hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
     ui.name = label(page, "GameFontHighlightLarge")
     ui.name:SetPoint("TOPLEFT", ui.icon, "TOPRIGHT", 10, -1)
-    ui.name:SetPoint("RIGHT", page, "RIGHT", -240, 0)
+    ui.name:SetPoint("RIGHT", page, "RIGHT", -400, 0) -- the range buttons are right of it
     ui.name:SetJustifyH("LEFT")
     ui.stats = label(page, "GameFontHighlightSmall")
     ui.stats:SetPoint("TOPLEFT", ui.name, "BOTTOMLEFT", 0, -5)
@@ -1020,7 +1021,7 @@ do
     local right
     for k = #RANGES, 1, -1 do
       local r = RANGES[k]
-      local b = button(page, r.button, 72, function()
+      local b = button(page, r.button, 62, function()
         ns.db.itemDetail = ns.db.itemDetail or {}
         ns.db.itemDetail.bigRange = r.key
         ns.Safe(draw)
@@ -1079,6 +1080,9 @@ do
     local hourPx = v.w / (v.span / 3600)
     local hstep = hourPx * 3 >= 34 and 3 or (hourPx * 6 >= 22 and 6 or 12)
     local unit = hstep * 3600
+    -- a short range (live view): ticks every 10 minutes (5 under half an hour) with the time
+    local short = v.span <= 3 * 3600
+    if short then unit = v.span <= 1800 and 300 or (v.span <= 3600 and 600 or 1800) end
     local bStart, bEnd = berlin(v.axisStart), berlin(v.axisEnd)
     local firstDay
     local b = math.ceil(bStart / unit) * unit
@@ -1103,7 +1107,7 @@ do
           local fs = take("hourLabel")
           fs:ClearAllPoints()
           fs:SetPoint("TOP", ui.plot, "BOTTOMLEFT", x, -3)
-          fs:SetText(date("!%H", b))
+          fs:SetText(short and date("!%H:%M", b) or date("!%H", b))
         end
       end
       b = b + unit
