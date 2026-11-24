@@ -319,8 +319,8 @@ end
 -- the bid column's cell template (Forever: "...AllAuctionsBid...", retail: "...AuctionsBid...")
 local BID_TEMPLATES = { AuctionHouseTableCellAllAuctionsBidTemplate = true, AuctionHouseTableCellAuctionsBidTemplate = true }
 local TEXT_TEMPLATE = "AuctionHouseTableCellTextTemplate"
-local OWN_WIDTH = 82
-local CANCEL_WIDTH = 66
+local OWN_WIDTH = 80
+local CANCEL_WIDTH = 80
 SellInfo.columns = false -- true once the own columns are in the table
 
 -- Our columns sort by nothing: no arrow, no click (Blizzard's header would sort by the price).
