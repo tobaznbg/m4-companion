@@ -1727,11 +1727,11 @@ do
   -- entries (the oldest go). { t = seconds (precise), w = time(), e = event, ... }
   local TRACE_MAX = 20000
   local clockNow = GetTimePreciseSec or GetTime
-  function Fish.Trace(event, a, b, c, d)
+  function Fish.Trace(event, a, b, c, d, r)
     if not (live() and ahOpen()) then return end
     ns.db.fishTrace = ns.db.fishTrace or {}
     local log = ns.db.fishTrace
-    log[#log + 1] = { t = clockNow(), w = time(), e = event, a = a, b = b, c = c, d = d }
+    log[#log + 1] = { t = clockNow(), w = time(), e = event, a = a, b = b, c = c, d = d, r = r }
     if #log > TRACE_MAX then table.remove(log, 1) end
   end
   do
@@ -1757,8 +1757,18 @@ do
       local api = C_AuctionHouse
       local first = api.GetNumCommoditySearchResults and (api.GetNumCommoditySearchResults(itemID) or 0) > 0
         and api.GetCommoditySearchResultInfo(itemID, 1) or nil
-      Fish.Trace("results", itemID, api.GetNumCommoditySearchResults and api.GetNumCommoditySearchResults(itemID) or 0,
-        first and first.unitPrice, first and (first.containsOwnerItem and 1 or 0))
+      -- r: the three cheapest rows "price:units:own" (own = units of ours in the row), ';'-separated
+      local rows = {}
+      local num = api.GetNumCommoditySearchResults and api.GetNumCommoditySearchResults(itemID) or 0
+      for i = 1, math.min(3, num) do
+        local x = api.GetCommoditySearchResultInfo(itemID, i)
+        if x then
+          local own = x.containsOwnerItem and math.max(1, x.numOwnerItems or 0) or 0
+          rows[#rows + 1] = string.format("%d:%d:%d", x.unitPrice or 0, x.quantity or 0, own)
+        end
+      end
+      Fish.Trace("results", itemID, num, first and first.unitPrice, first and (first.containsOwnerItem and 1 or 0),
+        table.concat(rows, ";"))
     end)
     for _, ev in ipairs({ "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED",
         "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED", "AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED",
