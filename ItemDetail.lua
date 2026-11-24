@@ -1175,7 +1175,9 @@ do
     if not (id and rows and rows.id == id) then return nil end
     local c = Fish.Cfg(id)
     local e = ns.Item.Get(id)
-    return Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, c.budget, Fish.DB().spent)
+    local plan = Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, c.budget, Fish.DB().spent)
+    if plan and plan.limit then Fish.lastLimit = { id = id, limit = plan.limit } end
+    return plan
   end
 
   local function inCombat() return InCombatLockdown and InCombatLockdown() and true or false end
@@ -1274,7 +1276,7 @@ do
     local api = C_AuctionHouse
     if Fish.pending or not (api and api.StartCommoditiesPurchase) then return end
     local p = { itemID = shownID, n = plan.n, sum = plan.sum, limit = plan.limit, bite = plan.baitLies,
-      state = "asking", t = GetTime(), auto = auto }
+      state = "asking", t = GetTime(), auto = auto, blind = plan.blind }
     Fish.pending = p
     Fish.stat.asks = Fish.stat.asks + 1
     Fish.asking = true -- our own call: the hook below must not take it for Blizzard's dialog
@@ -1318,12 +1320,31 @@ do
       end
       return Fish.Refresh()
     end
-    -- one button, the next step: a catch is asked for (its price checked), else a bait is set
+    -- one button, the next step: a bait when none of ours lies (and no catch is seen), else the
+    -- price is asked at once - every click, whether or not a search showed a catch ("hammering":
+    -- the quote is the freshest look at the cheapest units there is). N: the catch the last
+    -- search saw, else 1; a quote over the catch limit is dropped silently (see the price event).
     local plan = Fish.Plan(shownID)
-    if plan and plan.n > 0 then
-      Fish.Ask(plan, false)
-    elseif not Fish.noBait and plan and plan.bait and not plan.baitLies and not Fish.baitAwait then
+    local catch = plan and plan.n > 0
+    if not catch and not Fish.noBait and plan and plan.bait and not plan.baitLies and not Fish.baitAwait then
       ns.Safe(Fish.Bait)
+    else
+      local limit = (plan and plan.limit) or (Fish.lastLimit and Fish.lastLimit.id == shownID and Fish.lastLimit.limit)
+      -- our own bait as the cheapest offer: a probe for 1 unit would be that unit (the game does
+      -- not sell it, the buy fails) - the click asks for a fresh search at once instead
+      local front = Fish.rows and Fish.rows.id == shownID and Fish.rows.list and Fish.rows.list[1]
+      if not catch and front and (front.own or 0) > 0 then
+        if ns.AHSearch and ns.AHSearch.Request then ns.Safe(ns.AHSearch.Request, shownID, nil, true) end
+        limit = nil
+      end
+      if limit then
+        local left = Fish.Cfg(shownID).budget - Fish.DB().spent
+        local n = catch and plan.n or 1
+        if catch or n * limit <= left then
+          Fish.Ask({ n = n, sum = catch and plan.sum or limit, limit = limit, baitLies = plan and plan.baitLies,
+            blind = not catch }, false)
+        end
+      end
     end
     Fish.Refresh()
   end
@@ -1488,7 +1509,7 @@ do
         look(ui.fishBtn, false, false, "Kauf läuft …", nil)
       end
     elseif Fish.stale and not (Fish.rows and Fish.rows.id == id) then
-      look(ui.fishBtn, false, false, "Prüfe Angebot …", "Neue Suche nach einem verpassten Fang")
+      look(ui.fishBtn, true, false, "Preis prüfen", nil)
     elseif not open then
       look(ui.fishBtn, false, false, "Fischen", "nur am Auktionshaus")
     elseif combat then
@@ -1502,10 +1523,9 @@ do
       look(ui.fishBtn, false, false, note or "Tagesbudget erreicht", "Rechtsklick auf die Zeile darüber: Budget")
     elseif not (plan and plan.bait) then
       look(ui.fishBtn, false, false, note or "noch keine Fanggrenze", nil)
-    elseif Fish.noBait then
-      look(ui.fishBtn, false, false, note or "Köder aus – warte auf Fang", nil)
-    elseif lies or Fish.baitAwait then
-      look(ui.fishBtn, false, false, note or "warte auf Fang", nil)
+    elseif Fish.noBait or lies or Fish.baitAwait then
+      -- hammering: every click asks the price of the cheapest unit now
+      look(ui.fishBtn, true, false, note or ("Preis prüfen (bis " .. money(plan.limit) .. ")"), nil)
     elseif have == 0 then
       look(ui.fishBtn, false, false, "kein Stück für den Köder in den Taschen", nil)
     elseif not loc then
@@ -1592,10 +1612,20 @@ do
       total = tonumber(total)
       Fish.stat.quotes = Fish.stat.quotes + 1
       Fish.stat.lastQuote = string.format("%s für %d (Plan %s)", total and money(total) or "?", p.n, money(p.sum))
+      if p.blind then
+        -- a probe: cheap enough -> confirm on the next click, else dropped without a word
+        if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
+          Fish.stat.probes = (Fish.stat.probes or 0) + 1
+          Fish.pending = nil
+          if C_AuctionHouse.CancelCommoditiesPurchase then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
+          ns.Safe(Fish.Refresh)
+          return
+        end
+      end
       local why
       if not total then
         why = "kein Preis erhalten"
-      elseif total > p.sum * 1.01 then
+      elseif not p.blind and total > p.sum * 1.01 then
         Fish.stat.misses = Fish.stat.misses + 1
         return Fish.Drop(true, nil, true) -- someone bought the cheap ones first
       elseif total > p.n * p.limit then
