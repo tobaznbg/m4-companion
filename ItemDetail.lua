@@ -1076,7 +1076,9 @@ do
   local FISH_DEFAULT = { minGain = 0.15, budget = 300000 }
   -- seconds: no answer to a quote, an unclicked "Bestätigen", no answer to a buy, and the pause
   -- after a dropped quote before the next one is asked by itself
-  local QUOTE_TIMEOUT, CONFIRM_TIMEOUT, BUY_TIMEOUT, COOLDOWN = 5, 30, 10, 3
+  -- BUY_TIMEOUT: purchase answers came after 0.10-0.89 s (148 measured, 24 Nov); a confirm the
+  -- game drops from its queue never gets one - 2 s, not 10 s blind
+  local QUOTE_TIMEOUT, CONFIRM_TIMEOUT, BUY_TIMEOUT, COOLDOWN = 5, 30, 2, 3
 
   function Fish.DB()
     ns.db.fish = ns.db.fish or {}
