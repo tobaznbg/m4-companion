@@ -1344,9 +1344,19 @@ do
     local plan = Fish.Plan(shownID)
     local K = Fish.BaitPrice(shownID, plan)
     if not K then return Fish.Refresh() end
-    if (Fish.cycle or "bait") == "bait" and not Fish.noBait then
+    if Fish.cycle == "posting" then
+      return Fish.Refresh() -- the bait is on its way: no ask in between (it would hang in the throttle)
+    elseif (Fish.cycle or "bait") == "bait" and not Fish.noBait then
       ns.Safe(Fish.Bait, K)
-      Fish.cycle = "check"
+      if Fish.baitSent and GetTime() - Fish.baitSent < 0.5 then
+        -- step 2 only once the game confirmed the auction (AUCTION_HOUSE_AUCTION_CREATED), at
+        -- the latest after 5 s
+        Fish.cycle = "posting"
+        local sent = Fish.baitSent
+        C_Timer.After(5, function()
+          if Fish.cycle == "posting" and Fish.baitSent == sent then Fish.cycle = "check"; ns.Safe(Fish.Refresh) end
+        end)
+      end
     else
       local n = 0
       if Fish.rows and Fish.rows.id == shownID then
@@ -1544,6 +1554,8 @@ do
       local K = Fish.BaitPrice(id, plan)
       if not K then
         look(ui.fishBtn, false, false, note or "kein Köderpreis (Händlerpreis unbekannt)", nil)
+      elseif Fish.cycle == "posting" then
+        look(ui.fishBtn, false, false, "1 Köder wird eingestellt …", nil)
       elseif (Fish.cycle or "bait") == "bait" and not Fish.noBait then
         if have == 0 then
           look(ui.fishBtn, false, false, "1 Köder: kein Stück in den Taschen", nil)
@@ -1717,6 +1729,10 @@ do
       if p and p.state == "asking" then Fish.Drop(false, nil, true) end -- the offer is gone already
     end)
     ns.On("COMMODITY_PURCHASE_SUCCEEDED", function() Fish.cycle = "bait" end)
+    ns.On("AUCTION_HOUSE_AUCTION_CREATED", function()
+      if Fish.cycle == "posting" then Fish.cycle = "check"; ns.Safe(Fish.Refresh) end
+      Fish.Trace("auction_created")
+    end)
     ns.On("COMMODITY_PURCHASE_FAILED", function() Fish.cycle = "bait" end)
     ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
       local p = Fish.pending
