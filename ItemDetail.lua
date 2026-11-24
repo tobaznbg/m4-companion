@@ -1362,7 +1362,8 @@ do
         Fish.Dbg("1 Köder NICHT gesetzt (kein Stück / gesperrt / Spiel lehnt ab)")
       end
     else
-      Fish.Dbg("warte: " .. tostring(info))
+      Fish.Dbg(kind == "lies" and ("warte: unser Köder liegt (" .. tostring(info) .. " Stück bis " .. money(Fish.Limit(shownID, K)) .. ")")
+        or ("warte: " .. tostring(info)))
     end
     Fish.Refresh()
   end
@@ -1420,7 +1421,8 @@ do
     end
     local n, big, own = 0, false, 0
     for _, r in ipairs(rows.list or {}) do
-      own = own + (r.own or 0)
+      -- our bait: own units at or under the bait price (own auctions dearer are sales, not bait)
+      if r.unit <= K then own = own + (r.own or 0) end
       local f = math.max(0, (r.qty or 0) - (r.own or 0))
       if r.unit <= K and f > 0 then
         n = n + f
@@ -1669,7 +1671,7 @@ do
         local kind, info = Fish.State(itemID, K)
         local L = Fish.Limit(itemID, K)
         local own = 0
-        for _, r in ipairs(Fish.rows.list) do own = own + (r.own or 0) end
+        for _, r in ipairs(Fish.rows.list) do if r.unit <= L then own = own + (r.own or 0) end end
         local r1 = Fish.rows.list[1]
         local key = kind .. ":" .. tostring(info) .. ":" .. own
         if key ~= Fish.stateKey then
