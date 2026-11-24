@@ -212,6 +212,9 @@ end
 -- itemKey (optional): the full key of a variant (random suffix); else the plain item.
 function AHSearch.Request(itemID, callback, front, itemKey)
   if not itemID or not AHSearch.IsOpen() then return false end
+  -- fishing mode: only the fished item is searched
+  local fish = ns.FishItem and ns.FishItem()
+  if fish and itemID ~= fish then return false end
   local e = entries[itemID]
   if e and itemKey and e.state == "queued" then e.itemKey = itemKey end
   if not e then

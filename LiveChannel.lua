@@ -383,6 +383,8 @@ end
 
 local lastTick
 local function tick()
+  -- fishing mode: nothing sent meanwhile (receiving goes on)
+  if ns.FishMode and ns.FishMode() then return end
   local t = clock()
   local dt = lastTick and (t - lastTick) or 0
   lastTick = t

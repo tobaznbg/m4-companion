@@ -1145,6 +1145,22 @@ do
   local function ahOpen() return ns.AHSearch and ns.AHSearch.IsOpen() or false end
   local function live() return Big.IsShown() and shownID ~= nil and rangeDef().key == "live" end
 
+  -- Fishing mode (switch beside the buttons): while on, at the auction house and in the live
+  -- view, every other auction house query of the addon stands still - the full scan, the
+  -- sniper, the 10 s refresh of the auction lists, single searches of other items and the
+  -- live channel's sending - so the one search a second of the fished item never waits.
+  -- Session only (off after a reload).
+  function ns.FishMode() return Fish.mode and live() and ahOpen() or false end
+  function ns.FishItem() return ns.FishMode() and shownID or nil end
+  function Fish.SetMode(on)
+    Fish.mode = on and true or false
+    if Fish.mode then
+      if ns.Sniper and ns.Sniper.IsRunning and ns.Sniper.IsRunning() then ns.Safe(ns.Sniper.Click) end
+      if ns.AuctionScan and ns.AuctionScan.Abort then ns.Safe(ns.AuctionScan.Abort) end
+    end
+    ns.Safe(Fish.Refresh)
+  end
+
   -- A unit of the item in the carried bags: the location of an unlocked stack and the count.
   function Fish.BagSlot(id)
     local c = C_Container or {}
@@ -1307,6 +1323,10 @@ do
     if not (ui and ui.fishLine) then return end
     local on = live()
     ui.fishLine:SetShown(on)
+    if ui.mode then
+      ui.mode:SetShown(on)
+      ui.mode:SetText(Fish.mode and "|cff5fd38dFischmodus: an|r" or "Fischmodus: aus")
+    end
     ui.bait:SetShown(on)
     ui.fishBtn:SetShown(on)
     local p = Fish.pending
@@ -1642,6 +1662,9 @@ do
     ui.fishLine = fl
     ui.bait = button(page, "Köder setzen", 230, function() ns.Safe(Fish.Bait) end)
     ui.bait:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT, 6)
+    -- the fishing mode switch between the two buttons
+    ui.mode = button(page, "Fischmodus: aus", 130, function() Fish.SetMode(not Fish.mode) end)
+    ui.mode:SetPoint("LEFT", ui.bait, "RIGHT", 8, 0)
     -- the fish button has a global name: a macro "/click M4CompanionFishButton" puts it on a key
     local ok, fb = pcall(CreateFrame, "Button", "M4CompanionFishButton", page, "UIPanelButtonTemplate")
     if ok and fb then

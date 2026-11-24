@@ -283,6 +283,11 @@ eventFrame:SetScript("OnEvent", function(self, event)
 end)
 
 function Scan.Start()
+  -- fishing mode (ItemDetail.lua): no scan, all queries go to the fished item
+  if ns.FishMode and ns.FishMode() then
+    print(PREFIX .. "Fischmodus an – kein Vollscan.")
+    return
+  end
   if state then
     print(PREFIX .. "Scan läuft bereits.")
     return
@@ -330,6 +335,8 @@ local function abort()
     print(PREFIX .. "Scan abgebrochen (Auktionshaus geschlossen).")
   end
 end
+-- Stops a running scan (fishing mode switched on).
+function Scan.Abort() if state then abort() end end
 
 -- Tab "AH-Scan" under the auction house ----------------------------------------------------
 -- After Blizzard's tabs (Kaufen / Verkaufen / Auktionen), in their look. A click starts the full

@@ -789,6 +789,11 @@ local function attachAuctions()
         if shown then active = t end
       end
       if not active then left = AUTO_REFRESH return end
+      if ns.FishMode and ns.FishMode() then
+        left = AUTO_REFRESH
+        active.text:SetText("Aktualisierung aus (Fischmodus)")
+        return
+      end
       local enabled = active.button.IsEnabled and active.button:IsEnabled()
       if not enabled then active.text:SetText("Aktualisierung wartet …") return end
       left = left - 1

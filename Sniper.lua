@@ -737,6 +737,10 @@ function Sniper.Pending() return pending end
 
 -- The one button: Start, Stop, or (when the game wants a click per round) Suchen.
 function Sniper.Click()
+  if not running and ns.FishMode and ns.FishMode() then
+    note = "Fischmodus an – der Sniper ruht."
+    return changed()
+  end
   if not running then
     if not (api.SendBrowseQuery and api.GetBrowseResults) then
       note = "Dieser Client hat keine Browse-Suche."
