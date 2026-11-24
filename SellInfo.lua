@@ -804,26 +804,30 @@ local function attachAuctions()
   local box = list and rawget(list, "ScrollBox")
   if type(box) == "table" and box.SetDataProvider and box.GetScrollPercentage and not box.m4KeepScroll then
     box.m4KeepScroll = true
-    local lastPct, lastSize = 0, 0
+    local lastPct, lastSize, setT = 0, 0, 0
     local function size(b)
       local dp = b.GetDataProvider and b:GetDataProvider()
       return dp and dp.GetSize and dp:GetSize() or 0
     end
-    -- the position read a few times a second (the reset happens inside SetDataProvider)
+    -- the position read a few times a second, but not right after a refill (Blizzard may empty
+    -- the list first and fill it a moment later: both jump to the top)
     local poll = CreateFrame("Frame", nil, af)
     local since = 0
     poll:SetScript("OnUpdate", function(_, dt)
       since = since + (dt or 0)
       if since < 0.2 then return end
       since = 0
+      if GetTime() - setT < 1.5 then return end
+      local n = size(box)
       local ok, pct = pcall(box.GetScrollPercentage, box)
-      if ok and pct then lastPct, lastSize = pct, size(box) end
+      if ok and pct and n > 0 then lastPct, lastSize = pct, n end
     end)
     hooksecurefunc(box, "SetDataProvider", function(b)
+      setT = GetTime()
       local n = size(b)
-      if lastPct > 0 and lastSize > 0 and math.abs(n - lastSize) <= 3 then
+      if n > 0 and lastPct > 0 and lastSize > 0 and math.abs(n - lastSize) <= 3 then
         local pct = lastPct
-        C_Timer.After(0, function() pcall(b.SetScrollPercentage, b, pct); lastPct = pct end)
+        C_Timer.After(0, function() pcall(b.SetScrollPercentage, b, pct) end)
       end
     end)
   end
