@@ -21,7 +21,7 @@ local CUT = 0.05
 local DEPOSIT_2H = 0.05
 local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100"
 
-local window, split, selected
+local page, split, selected
 local SOURCES = { cloud = "Cloud", scan = "Vollscan", search = "Suche", players = "Spieler" }
 
 local function money(c) return c and ns.FormatMoney(math.floor(c + 0.5), true) or "–" end
@@ -238,52 +238,47 @@ local function entries()
 end
 
 local function refresh()
-  if not (window and window.frame:IsShown() and split) then return end
+  if not (page and page:IsVisible() and split) then return end
   local list = entries()
   split.SetEntries(list)
-  if window.empty then
-    window.empty:SetShown(#list == 0)
-  end
+  if page.empty then page.empty:SetShown(#list == 0) end
 end
 Trade.Refresh = function() ns.Safe(refresh) end
 
-local function create()
-  local NW = ns.NativeWindow
-  window = NW.New({ name = "M4CompanionDayTrade", title = "Tageshandel", icon = "Interface\\Icons\\INV_Misc_Coin_02",
-    width = 700 })
-  window:AddTab({ key = "list", title = "Tageshandel", hidden = true, build = function(page)
-    split = NW.Split(page, { onSelect = show, listWidth = 300 })
-    local empty = page:CreateFontString(nil, "OVERLAY", "GameFontDisable")
-    empty:SetPoint("TOPLEFT", 20, -60)
-    empty:SetWidth(260)
-    empty:SetJustifyH("LEFT")
-    empty:SetText("Für dieses Auktionshaus liegen noch keine Tageshandel-Daten aus der Cloud vor "
-      .. "(Datenpaket über die Companion-App aktualisieren und /reload).")
-    window.empty = empty
-  end, onShow = function() refresh() end })
-  -- the hour moves items between the groups: check once a minute while open
+-- The page of the ledger's side tab "Tageshandel" (TradeBook.lua, under "Marktsuche").
+function Trade.Build(p)
+  page = p
+  split = ns.NativeWindow.Split(p, { onSelect = show, listWidth = 300 })
+  local empty = p:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+  empty:SetPoint("TOPLEFT", 20, -60)
+  empty:SetWidth(260)
+  empty:SetJustifyH("LEFT")
+  empty:SetText("Für dieses Auktionshaus liegen noch keine Tageshandel-Daten aus der Cloud vor "
+    .. "(Datenpaket über die Companion-App aktualisieren und /reload).")
+  p.empty = empty
+  -- the hour moves items between the groups: check once a minute while shown
   local acc = 0
-  -- the "Tageshandel" tab under the ledger window looks selected while this window is open
-  local function sync() if ns.TradeBook and ns.TradeBook.SyncTradeTab then ns.Safe(ns.TradeBook.SyncTradeTab) end end
-  window.frame:HookScript("OnShow", sync)
-  window.frame:HookScript("OnHide", sync)
-  window.frame:HookScript("OnUpdate", function(_, dt)
+  p:HookScript("OnUpdate", function(_, dt)
     acc = acc + dt
     if acc >= 60 then acc = 0; refresh() end
   end)
 end
 
+-- Shown on the page's onShow (TradeBook.lua).
+function Trade.OnShow() refresh() end
+
 function Trade.Show()
-  if not window then create() end
-  window:Show()
-  window:SelectTab("list")
-  refresh()
+  if ns.TradeBook and ns.TradeBook.ShowDayTrade then ns.TradeBook.ShowDayTrade() end
 end
 
-function Trade.Frame() return window and window.frame end
-
+-- The auction house button: opens the ledger on this tab, closes it when it already shows it.
 function Trade.Toggle()
-  if window and window.frame:IsShown() then window.frame:Hide() else Trade.Show() end
+  local TB = ns.TradeBook
+  if TB and TB.Frame and TB.Frame() and TB.Frame():IsShown() and TB.Current and TB.Current() == "daytrade" then
+    TB.Frame():Hide()
+  else
+    Trade.Show()
+  end
 end
 
 -- Live: a search of a pool item redraws at once (Item.Get has it as the newest source). One
