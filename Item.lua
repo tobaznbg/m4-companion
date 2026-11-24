@@ -101,6 +101,7 @@ local function epoch(iso)
   end
   return epochCache[iso] or nil
 end
+Item.Epoch = epoch
 
 -- Guild sales prices from the data addon (M4CompanionData.GuildSales, kept current by the
 -- companion app): { updated, days, houses = { [house] = { [itemID] = { median, sales, units } } } }.

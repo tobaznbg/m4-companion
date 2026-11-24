@@ -229,6 +229,9 @@ SlashCmdList.M4COMPANION = function(msg)
     if not (ns.TradeBook and ns.TradeBook.ShowBoxenstopp()) then
       print("|cffffd100M4:|r Der Boxenstopp-Planer ist aus: Einstellungen → Min-Max-Optimierung.")
     end
+  elseif msg == "overlay" or msg == "tageshandel" then
+    -- /m4 overlay: the small movable day-trading overlay on and off (DayTradeOverlay.lua)
+    if ns.DayTradeOverlay then ns.Safe(ns.DayTradeOverlay.Toggle) end
   elseif msg == "buch" then
     if ns.TradeBook then ns.Safe(ns.TradeBook.Toggle) end
   elseif msg == "strip" then

@@ -63,6 +63,7 @@ local function offer(itemID, limit)
     end
     -- only the cheapest levels are known: with all of them under the limit more may follow
     o.units, o.atLeast = units, capped and all or nil
+    o.levels = levels
   end
   return o
 end
@@ -116,6 +117,18 @@ local function state(itemID, r)
   end
   return s
 end
+
+-- Every pool item of the current house with its state now (for the overlay, DayTradeOverlay.lua).
+function Trade.States()
+  local pool = Trade.Pool()
+  local out = {}
+  for itemID, r in pairs(pool or {}) do
+    local ok, s = pcall(state, itemID, r)
+    if ok and s then out[#out + 1] = s end
+  end
+  return out
+end
+Trade.CUT, Trade.Ago = CUT, ago
 
 -- Card -------------------------------------------------------------------------------------
 
@@ -267,8 +280,9 @@ end
 -- Shown on the page's onShow (TradeBook.lua).
 function Trade.OnShow() refresh() end
 
-function Trade.Show()
+function Trade.Show(itemID)
   if ns.TradeBook and ns.TradeBook.ShowDayTrade then ns.TradeBook.ShowDayTrade() end
+  if itemID and split and split.Select then split.Select(itemID) end
 end
 
 -- The auction house button: opens the ledger on this tab, closes it when it already shows it.

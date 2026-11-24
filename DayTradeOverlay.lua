@@ -1,0 +1,240 @@
+-- DayTradeOverlay: a small movable box on the screen (like LayerSwap's) for checking the day
+-- trading on the go: how fresh the data is, what to buy now (with the expected profit for a
+-- fixed capital, 10g) and what to post now. A click on a line opens the ledger's "Tageshandel"
+-- tab on that item (and searches it when the auction house is open); right click hides the box,
+-- "/m4 overlay" brings it back. The numbers come from DayTrade.lua (Trade.States), so the box and
+-- the tab never disagree.
+local ADDON, ns = ...
+
+local Overlay = {}
+ns.DayTradeOverlay = Overlay
+
+local CAPITAL = 100000 -- copper: the money the buy suggestions are planned with (10g)
+local MAX_LINES = 5
+local WIDTH = 290
+local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100" -- luacheck: ignore RED
+
+local frame, rows, title, fresh
+local function money(c) return ns.FormatMoney(math.floor((c or 0) + 0.5), true) end
+
+local function settings()
+  ns.db.ui = ns.db.ui or {}
+  return ns.db.ui
+end
+
+-- Buying one item with the capital: along its known price levels up to the buy limit and the
+-- daily maximum. Without levels (cloud snapshot only) every unit is priced at the cheapest one
+-- (approx = true). Returns units, cost, expected profit after cut and deposit at the ask.
+local function plan(s, capital)
+  local o = s.offer
+  local net = s.ask * (1 - ns.DayTrade.CUT) - s.dep
+  local qty, cost = 0, 0
+  if o.levels and #o.levels > 0 then
+    local levels = {}
+    for i, l in ipairs(o.levels) do levels[i] = l end
+    table.sort(levels, function(a, b) return a.unit < b.unit end)
+    for _, l in ipairs(levels) do
+      if l.unit > s.limit then break end
+      local take = math.min(l.count, s.maxQty - qty, math.floor((capital - cost) / l.unit))
+      if take <= 0 then break end
+      qty, cost = qty + take, cost + take * l.unit
+    end
+    return qty, cost, qty * net - cost, false
+  end
+  if not o.cheapest or o.cheapest > s.limit then return 0, 0, 0, false end
+  qty = math.min(s.maxQty, math.floor(capital / o.cheapest))
+  cost = qty * o.cheapest
+  return qty, cost, qty * net - cost, true
+end
+
+-- "Cloud 12:22 · Scan 12:35 · Spieler 12:40", each colored by its age.
+local function freshness()
+  local function part(label, t)
+    if not t then return MUTED .. label .. " –|r" end
+    local age = time() - t
+    local c = age < 1200 and GREEN or age < 4200 and GOLD or RED
+    return c .. label .. " " .. date("%H:%M", t) .. "|r"
+  end
+  local AH = ns.AuctionHouse
+  local data, id = AH.CloudData()
+  local cloudT = data and ns.Item.Epoch and ns.Item.Epoch(data.updated)
+  local own = AH.Peek()
+  local scanT = own and own.currentT
+  local players = id and ns.AHObs and ns.AHObs[id]
+  local playersT = players and ns.Item.Epoch and ns.Item.Epoch(players.updated)
+  if playersT and playersT <= 0 then playersT = nil end -- an empty shell of m4d (1970)
+  return part("Cloud", cloudT) .. MUTED .. " · |r" .. part("Scan", scanT) .. MUTED .. " · |r" .. part("Spieler", playersT)
+end
+
+local function row(i)
+  if rows[i] then return rows[i] end
+  local b = CreateFrame("Button", nil, frame)
+  b:SetHeight(14)
+  b:SetPoint("LEFT", frame, "LEFT", 10, 0)
+  b:SetPoint("RIGHT", frame, "RIGHT", -10, 0)
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  b.left = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.left:SetPoint("LEFT", 0, 0)
+  b.left:SetJustifyH("LEFT")
+  b.left:SetWordWrap(false)
+  b.right = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.right:SetPoint("RIGHT", 0, 0)
+  b.right:SetJustifyH("RIGHT")
+  b.left:SetPoint("RIGHT", b.right, "LEFT", -6, 0)
+  local hl = b:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints()
+  hl:SetColorTexture(1, 1, 1, 0.08)
+  b:SetScript("OnClick", function(self, button)
+    if button == "RightButton" then return Overlay.Hide() end
+    if not self.itemID then return end
+    ns.Safe(ns.DayTrade.Show, self.itemID)
+    if AuctionHouseFrame and AuctionHouseFrame:IsShown() and ns.Deals and ns.Deals.Search then
+      if AuctionHouseFrameDisplayMode then AuctionHouseFrame:SetDisplayMode(AuctionHouseFrameDisplayMode.Buy) end
+      local id = self.itemID
+      C_Timer.After(0.1, function() ns.Safe(ns.Deals.Search, id) end)
+    end
+  end)
+  b:SetScript("OnEnter", function(self)
+    if not self.itemID then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetItemByID(self.itemID)
+    if self.tip then GameTooltip:AddLine(self.tip, 1, 1, 1, true) end
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  -- drags move the whole box, also when started on a line
+  b:RegisterForDrag("LeftButton")
+  b:SetScript("OnDragStart", function() frame:StartMoving() end)
+  b:SetScript("OnDragStop", function() Overlay.StopMoving() end)
+  rows[i] = b
+  return b
+end
+
+local function refresh()
+  if not (frame and frame:IsShown()) then return end
+  title:SetText(GOLD .. "Tageshandel|r  " .. MUTED .. ns.AuctionHouse.Name() .. "|r")
+  fresh:SetText(freshness())
+  local states = ns.DayTrade.States()
+  local lines = {}
+  local function add(l) lines[#lines + 1] = l end
+  if #states == 0 then
+    add({ text = MUTED .. "Keine Tageshandel-Daten für dieses Auktionshaus.|r" })
+  else
+    -- buy now: everything in its buy window under the limit, best expected profit first
+    local buys = {}
+    for _, s in ipairs(states) do
+      if s.phase == "buy" and s.offer.cheapest and s.offer.cheapest <= s.limit then
+        local qty, cost, profit, approx = plan(s, CAPITAL)
+        if qty > 0 and profit > 0 then buys[#buys + 1] = { s = s, qty = qty, cost = cost, profit = profit, approx = approx } end
+      end
+    end
+    table.sort(buys, function(a, b) return a.profit > b.profit end)
+    add({ head = string.format("Jetzt kaufen  %s(Kapital %s)|r", MUTED, money(CAPITAL)) })
+    if #buys == 0 then add({ text = MUTED .. "nichts unter der Kaufgrenze|r" }) end
+    for i = 1, math.min(#buys, MAX_LINES) do
+      local b = buys[i]
+      add({ itemID = b.s.itemID, text = ns.ItemName(b.s.itemID) or ("Item " .. b.s.itemID),
+        right = string.format("%d× bis %s  %s%s+%s|r", b.qty, money(b.s.limit), GREEN, b.approx and "~" or "", money(b.profit)),
+        tip = string.format("Kaufen: %d Stück für %s (Grenze %s je Stück).\nEinstellen %s zu %s je Stück: erwartet +%s nach Gebühr und Einstellgebühr.",
+          b.qty, money(b.cost), money(b.s.limit), string.format("%d–%d Uhr", b.s.sellHour, (b.s.sellHour + 3) % 24),
+          money(b.s.ask), money(b.profit)) })
+    end
+    -- post now: what the household holds in its sell window
+    local sells = {}
+    for _, s in ipairs(states) do
+      -- only what makes sense now: held, in its sell window and not undercut below the floor
+      if s.phase == "sell" and s.held > 0 and s.post then sells[#sells + 1] = s end
+    end
+    table.sort(sells, function(a, b) return a.post * a.held > b.post * b.held end)
+    add({ head = "Jetzt einstellen", gap = true })
+    if #sells == 0 then add({ text = MUTED .. "nichts, das jetzt lohnt|r" }) end
+    for i = 1, math.min(#sells, MAX_LINES) do
+      local s = sells[i]
+      add({ itemID = s.itemID, text = ns.ItemName(s.itemID) or ("Item " .. s.itemID),
+        right = string.format("%d× zu %s%s|r", s.held, s.post == s.ask and GREEN or GOLD, money(s.post)),
+        tip = s.post == s.ask and "2 h einstellen zum Zielpreis."
+          or "2 h einstellen, 1 Kupfer unter dem Günstigsten (der liegt unter dem Zielpreis)." })
+    end
+  end
+  local y = -40
+  for i, l in ipairs(lines) do
+    local r = row(i)
+    if l.gap then y = y - 6 end
+    r:ClearAllPoints()
+    r:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, y)
+    r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, y)
+    r.itemID, r.tip = l.itemID, l.tip
+    r.left:SetFontObject(l.head and "GameFontNormalSmall" or "GameFontHighlightSmall")
+    r.left:SetText(l.head or ((l.itemID and "  " or "") .. (l.text or "")))
+    r.right:SetText(l.right or "")
+    r:EnableMouse(l.itemID ~= nil)
+    r:Show()
+    y = y - 15
+  end
+  for i = #lines + 1, #rows do rows[i]:Hide() end
+  frame:SetHeight(-y + 8)
+end
+Overlay.Refresh = function() ns.Safe(refresh) end
+
+function Overlay.StopMoving()
+  frame:StopMovingOrSizing()
+  local point, _, rel, x, y = frame:GetPoint()
+  settings().tradeOverlayPos = { point, rel, x, y }
+end
+
+local function create()
+  frame = CreateFrame("Frame", "M4CompanionTradeOverlay", UIParent, "BackdropTemplate")
+  frame:SetWidth(WIDTH)
+  frame:SetFrameStrata("MEDIUM")
+  frame:SetClampedToScreen(true)
+  frame:SetMovable(true)
+  frame:EnableMouse(true)
+  frame:RegisterForDrag("LeftButton")
+  frame:SetScript("OnDragStart", frame.StartMoving)
+  frame:SetScript("OnDragStop", Overlay.StopMoving)
+  frame:SetScript("OnMouseUp", function(_, button) if button == "RightButton" then Overlay.Hide() end end)
+  if frame.SetBackdrop then
+    frame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    frame:SetBackdropColor(0, 0, 0, 0.65)
+    frame:SetBackdropBorderColor(1, 1, 1, 0.15)
+  end
+  local pos = settings().tradeOverlayPos
+  if type(pos) == "table" and pos[1] then
+    frame:SetPoint(pos[1], UIParent, pos[2] or pos[1], pos[3] or 0, pos[4] or 0)
+  else
+    frame:SetPoint("TOP", UIParent, "TOP", 0, -120)
+  end
+  title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  title:SetPoint("TOPLEFT", 10, -8)
+  fresh = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  fresh:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
+  rows = {}
+  frame:SetScript("OnShow", refresh)
+  -- prices age and the hour moves items between buy, sell and wait: redraw regularly
+  C_Timer.NewTicker(15, Overlay.Refresh)
+end
+
+function Overlay.Show()
+  if not frame then create() end
+  settings().tradeOverlay = true
+  frame:Show()
+  refresh()
+end
+
+function Overlay.Hide()
+  if frame then frame:Hide() end
+  settings().tradeOverlay = false
+  print("|cffffd100M4:|r Tageshandel-Overlay aus – mit /m4 overlay wieder an.")
+end
+
+function Overlay.Toggle()
+  if frame and frame:IsShown() then Overlay.Hide() else Overlay.Show() end
+end
+
+-- On by default; a hidden box stays hidden across sessions.
+ns.OnReady(function()
+  if settings().tradeOverlay ~= false then ns.Safe(Overlay.Show) end
+  if ns.Obs and ns.Obs.OnRecord then ns.Obs.OnRecord(function() C_Timer.After(0, Overlay.Refresh) end) end
+  if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(Overlay.Refresh) end
+  ns.AuctionHouse.OnChange(Overlay.Refresh)
+end)
