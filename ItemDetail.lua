@@ -830,7 +830,7 @@ do
   local W, H = 900, 560
   local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 74, 34 -- plot margins in the page
   -- the live view's bottom margin: the bait and fish line and buttons go under the time axis
-  local BOTTOM_LIVE = 86
+  local BOTTOM_LIVE = 100
   local RANGES = {
     { key = "live", span = 20 * 60, button = "Live", label = "20 min" },
     { key = "today", today = true, button = "Heute", label = "heute" },
@@ -1304,7 +1304,7 @@ do
     local plan = Fish.Plan(shownID)
     if plan and plan.n > 0 then
       Fish.Ask(plan, false)
-    elseif plan and plan.bait and not plan.baitLies and not (Fish.baitSent and GetTime() - Fish.baitSent < 5) then
+    elseif not Fish.noBait and plan and plan.bait and not plan.baitLies and not (Fish.baitSent and GetTime() - Fish.baitSent < 5) then
       ns.Safe(Fish.Bait)
     end
     Fish.Refresh()
@@ -1378,6 +1378,10 @@ do
     if on and ahOpen() and not Fish.modeWas then Fish.EnterMode() end
     Fish.modeWas = on and ahOpen()
     ui.bait:SetShown(false) -- one button does it all (Fish.Click)
+    if ui.noBait then
+      ui.noBait:SetShown(on)
+      ui.noBait:SetText(Fish.noBait and "|cffff6b6bKöder: aus|r" or "Köder: an")
+    end
     ui.fishBtn:SetShown(on)
     local p = Fish.pending
     if p and p.state ~= "buying" and (not on or p.itemID ~= shownID) then return Fish.Drop(true) end
@@ -1406,6 +1410,7 @@ do
       parts[#parts + 1] = M .. "Markt – Suche läuft|r"
     end
     parts[#parts + 1] = G .. "Budget|r " .. money(db.spent) .. " / " .. money(c.budget)
+    local first = #parts -- the rest goes on a second line
     if (Fish.missed or 0) > 0 then parts[#parts + 1] = G .. "verpasst|r " .. Fish.missed end
     -- today's result (details in the line's tooltip)
     local bal = Fish.Balance(id, plan and plan.market, plan and plan.dep)
@@ -1416,7 +1421,11 @@ do
       parts[#parts + 1] = string.format("%sHeute|r %s%s%s|r", G, bal.result >= 0 and "|cff5fd38d+" or "|cffff6b6b−",
         money(math.abs(bal.result)), "")
     end
-    ui.fishLine.text:SetText(table.concat(parts, "  ·  "))
+    local line1, line2 = {}, {}
+    for k, part in ipairs(parts) do
+      if k <= first then line1[#line1 + 1] = part else line2[#line2 + 1] = part end
+    end
+    ui.fishLine.text:SetText(table.concat(line1, "  ·  ") .. (#line2 > 0 and ("\n" .. table.concat(line2, "  ·  ")) or ""))
     -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
     local lies = plan and plan.baitLies or false
     if Fish.baitWas and Fish.baitWas.id == id and Fish.baitWas.lies and not lies then Fish.baitFlash = now + 3 end
@@ -1484,9 +1493,10 @@ do
       look(ui.fishBtn, false, false, note or "Tagesbudget erreicht", "Rechtsklick auf die Zeile darüber: Budget")
     elseif not (plan and plan.bait) then
       look(ui.fishBtn, false, false, note or "noch keine Fanggrenze", nil)
+    elseif Fish.noBait then
+      look(ui.fishBtn, false, false, note or "Köder aus – warte auf Fang", nil)
     elseif lies then
-      look(ui.fishBtn, false, false, note or ("Köder liegt (" .. money(plan.bait) .. ") – warte auf Biss"),
-        "Beißt jemand an, zeigt der Knopf den Kauf.")
+      look(ui.fishBtn, false, false, note or ("Köder liegt (" .. money(plan.bait) .. ") – warte auf Biss"), nil)
     elseif Fish.baitSent and now - Fish.baitSent < 5 then
       look(ui.fishBtn, false, false, "Köder wird eingestellt …", nil)
     elseif have == 0 then
@@ -1494,12 +1504,7 @@ do
     elseif not loc then
       look(ui.fishBtn, false, false, "Köder-Stück gerade gesperrt", nil)
     else
-      -- what the bait costs when someone takes it: own cost minus what it brings after the cut
-      local own = Fish.OwnCost(id)
-      local loss = own and (own - plan.bait * (1 - FISH_CUT)) or nil
-      look(ui.fishBtn, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, "Köder setzen (" .. money(plan.bait) .. ")",
-        "1 Stück zu " .. money(plan.bait) .. " für 2 h einstellen (Gebühr etwa " .. money(plan.dep or 0) .. ")"
-          .. (loss and loss > 0 and ("\nWird er weggekauft: −" .. money(loss) .. " gegenüber deinem Einstand " .. money(own)) or ""))
+      look(ui.fishBtn, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, "Köder setzen (" .. money(plan.bait) .. ")", nil)
     end
   end
 
@@ -1719,7 +1724,7 @@ do
     local fl = CreateFrame("Button", nil, page)
     fl:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT, 34)
     fl:SetPoint("RIGHT", page, "RIGHT", -6, 0)
-    fl:SetHeight(16)
+    fl:SetHeight(30) -- two lines
     fl.text = label(fl, "GameFontHighlightSmall")
     fl.text:SetAllPoints()
     fl.text:SetJustifyH("LEFT")
@@ -1783,6 +1788,12 @@ do
       ns.Safe(Fish.Click)
     end)
     fb:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -RIGHT, 6)
+    -- "Köder aus": the button only fishes (buys foreign catches), it never sets a bait
+    ui.noBait = button(page, "Köder: an", 110, function()
+      Fish.noBait = not Fish.noBait
+      ns.Safe(Fish.Refresh)
+    end)
+    ui.noBait:SetPoint("RIGHT", fb, "LEFT", -8, 0)
     -- a bite blinks
     fb:SetScript("OnUpdate", function(self, elapsed)
       if not self.blink then return end
