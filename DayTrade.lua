@@ -178,17 +178,19 @@ Trade.CUT, Trade.Ago, Trade.CAPITAL = CUT, ago, CAPITAL
 
 -- Card -------------------------------------------------------------------------------------
 
-local LABELS = { "Kaufzeit", "Kaufgrenze", "Einstellzeit", "Zielpreis (2 h)", "Untergrenze", "Höchstens / Tag",
-  "Üblich ≤ Grenze", "Erwartet / Tag", "Günstigster jetzt", "Angebot ≤ Grenze", "Im Haushalt" }
+-- The card shows what the item brings NOW, by its state: the labels change with it (ROWS rows).
+local ROWS = 6
 
 local function card(c)
   local NW = ns.NativeWindow
   local v = NW.CardHead(c)
-  v.Head:SetText("Tageshandel:")
-  v.fig = NW.Figures(c, v.Head, LABELS, { line = false })
+  v.Head:SetText("Jetzt:")
+  local labels = {}
+  for i = 1, ROWS do labels[i] = "" end
+  v.fig = NW.Figures(c, v.Head, labels, { line = false })
   v.fig.SetWidth(300)
   v.Advice = c:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  v.Advice:SetPoint("TOPLEFT", v.fig.labels[#LABELS], "BOTTOMLEFT", 0, -16)
+  v.Advice:SetPoint("TOPLEFT", v.fig.labels[ROWS], "BOTTOMLEFT", 0, -16)
   v.Advice:SetWidth(300)
   v.Advice:SetJustifyH("LEFT")
   v.Note = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -211,6 +213,56 @@ local function card(c)
   return v
 end
 
+-- { label, value } rows and the advice line of a state.
+local function cardRows(s)
+  local o = s.offer
+  local now = o.cheapest and (money(o.cheapest) .. MUTED .. "  " .. o.source .. ", " .. ago(o.t) .. "|r") or (MUTED .. "unbekannt|r")
+  if s.phase == "buy" and o.cheapest and o.cheapest <= s.limit then
+    local qty, cost, profit, _, top = Trade.Plan(s)
+    return {
+      { "Kaufen", string.format("%d Stück", qty) },
+      { "Einkauf", string.format("%s  %s(bis %s je Stück)|r", money(cost), MUTED, money(top or s.limit)) },
+      { "Verkaufen", string.format("%s zu %s", windowText(s.sellHour), money(s.ask)) },
+      { "Gewinn", GREEN .. "+" .. money(profit) .. "|r" },
+      { "Günstigster", now },
+      { "Im Haushalt", tostring(s.held) },
+    }, GREEN .. string.format("Jetzt %d Stück kaufen, %s einstellen.|r", qty, windowText(s.sellHour))
+  elseif s.phase == "buy" then
+    return {
+      { "Kaufzeit", windowText(s.buyHour) },
+      { "Kaufen bis", money(s.limit) },
+      { "Günstigster", now },
+      { "Im Haushalt", tostring(s.held) },
+    }, o.cheapest and (RED .. "Gerade zu teuer – nichts kaufen.|r") or (GOLD .. "Erst im AH suchen.|r")
+  elseif s.phase == "sell" then
+    if s.held == 0 then
+      return {
+        { "Verkaufszeit", windowText(s.sellHour) },
+        { "Zielpreis", money(s.ask) },
+        { "Günstigster", now },
+        { "Im Haushalt", "0" },
+      }, MUTED .. "Nichts zum Einstellen im Haushalt.|r"
+    end
+    local price = s.post or s.ask
+    return {
+      { "Einstellen", string.format("%d Stück", s.held) },
+      { "Preis (2 h)", s.post and money(price) or (RED .. "–|r") },
+      { "Erlös", s.post and money(s.held * (price * (1 - CUT) - s.dep)) or "–" },
+      { "Untergrenze", money(s.floor) },
+      { "Günstigster", now },
+    }, s.post and ((s.post == s.ask and GREEN or GOLD) .. string.format("Jetzt %d Stück für 2 h zu %s einstellen.|r", s.held, money(price)))
+      or (RED .. "Unterboten unter die Untergrenze – nicht einstellen.|r")
+  end
+  return {
+    { "Kauf ab", windowText(s.buyHour) },
+    { "Kaufen bis", money(s.limit) },
+    { "Verkaufen", string.format("%s zu %s", windowText(s.sellHour), money(s.ask)) },
+    { "Voraussichtlich", "+" .. money(s.profit or 0) },
+    { "Günstigster", now },
+    { "Im Haushalt", tostring(s.held) },
+  }, MUTED .. string.format("Nächster Kauf in %d h.|r", s.wait or 0)
+end
+
 local function show(entry, c)
   if not rawget(c, "m4Trade") then c.m4Trade = card(c) end
   local v = c.m4Trade
@@ -218,56 +270,23 @@ local function show(entry, c)
   local s = entry and entry.state
   local shown = s ~= nil
   for _, part in ipairs({ v.Icon, v.Ring, v.Name, v.Sub, v.Head, v.Advice, v.Note }) do part:SetShown(shown) end
-  for i = 1, #LABELS do v.fig.labels[i]:SetShown(shown); v.fig.values[i]:SetShown(shown) end
   if v.Search then v.Search:SetShown(shown and AuctionHouseFrame ~= nil and AuctionHouseFrame:IsShown()) end
+  local rows, advice
+  if shown then rows, advice = cardRows(s) end
+  for i = 1, ROWS do
+    local r = rows and rows[i]
+    v.fig.labels[i]:SetShown(r ~= nil)
+    v.fig.values[i]:SetShown(r ~= nil)
+    if r then v.fig.labels[i]:SetText(r[1]); v.fig.values[i]:SetText(r[2]) end
+  end
   if not shown then return end
   v.itemID = s.itemID
   v.Icon:SetTexture((C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(s.itemID)) or 134400)
   v.Name:SetText(ns.ItemName(s.itemID) or ("Item " .. s.itemID))
   v.Sub:SetText(ns.AuctionHouse.Name())
-  local o = s.offer
-  local values = {
-    windowText(s.buyHour),
-    money(s.limit),
-    windowText(s.sellHour),
-    money(s.ask),
-    money(s.floor),
-    tostring(s.maxQty),
-    s.avail and tostring(s.avail) or (MUTED .. "unbekannt|r"),
-    money(s.profitDay),
-    o.cheapest and (money(o.cheapest) .. MUTED .. "  " .. o.source .. ", " .. ago(o.t) .. "|r") or "–",
-    o.units and ((o.atLeast and "≥ " or "") .. o.units) or (MUTED .. "unbekannt|r"),
-    tostring(s.held),
-  }
-  for i, text in ipairs(values) do v.fig.values[i]:SetText(text) end
-  local advice
-  if s.phase == "buy" then
-    if o.cheapest and o.cheapest <= s.limit then
-      -- the own amount: what the capital buys (cheapest first, up to the limit and the day's maximum)
-      local qty, cost, profit, _, top = Trade.Plan(s)
-      advice = GREEN .. string.format("Jetzt kaufen: %d Stück für %s (bis %s je Stück).|r", qty, money(cost), money(top or s.limit))
-        .. MUTED .. string.format("\nEinstellen %s zu %s: %s+%s|r", windowText(s.sellHour), money(s.ask), GREEN, money(profit))
-    elseif o.cheapest then
-      advice = RED .. "Gerade zu teuer – nichts über der Kaufgrenze kaufen.|r"
-    else
-      advice = GOLD .. "Kaufzeit – erst suchen, dann kaufen.|r"
-    end
-  elseif s.phase == "sell" then
-    if s.post then
-      advice = (s.post == s.ask and GREEN or GOLD)
-        .. string.format("Jetzt für 2 h einstellen zu %s je Stück.|r", money(s.post))
-    elseif s.held > 0 then
-      advice = RED .. string.format("Unterboten unter die Untergrenze %s – nicht einstellen.|r", money(s.floor))
-    else
-      advice = MUTED .. "Verkaufszeit, aber nichts im Haushalt.|r"
-    end
-  else
-    advice = MUTED .. string.format("Nächster Kauf in %d h (%s).|r", s.wait, windowText(s.buyHour))
-  end
   v.Advice:SetText(advice)
-  v.Note:SetText("Fenster und Preise aus der Cloud (stündlich). Günstigster und Stückzahl aus der neuesten "
-    .. "Beobachtung: eigene Suche, eigener Vollscan, andere Spieler (Cloud oder live) oder Cloud-Stand. "
-    .. "Gebühr 5 %, Einstellgebühr 2 h " .. money(s.dep) .. " je Stück.")
+  v.Note:SetText(string.format("Gerechnet mit %dg Kapital, die günstigsten Angebote zuerst. Gebühr 5 %%, "
+    .. "Einstellgebühr 2 h %s je Stück.", math.floor(CAPITAL / 10000), money(s.dep)))
 end
 
 -- List -------------------------------------------------------------------------------------
