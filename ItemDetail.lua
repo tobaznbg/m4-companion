@@ -788,8 +788,7 @@ local function renderBody()
   -- saturation: are offers above the cheapest bought too (cloud, 7 days)
   local satText, _, satColor = ns.Item.SaturationText(item)
   line("Sättigung", satText and (satColor .. satText .. "|r") or "–")
-  local demand = ns.Item.DemandText(item)
-  line("Nachfrage", demand or "–")
+  line("Nachfrage", ns.Item.DemandColored(item) or "–")
   line("Angebot AH", string.format("%s Angebote  ·  %s Stück", count(item.offers), count(item.quantity)))
   -- How old the figures above are: the search on opening, else the newest source.
   local dataText
@@ -921,8 +920,7 @@ local function renderBody()
         line("Gewinn / Stück", (teach.profit >= 0 and (GREEN .. "+") or "|cffff6b6b-") .. m(math.abs(teach.profit)) .. "|r")
       end
       local p = teach.product
-      local demand = ns.Item.DemandText(p)
-      line("Nachfrage (Produkt)", demand or "–")
+      line("Nachfrage (Produkt)", ns.Item.DemandColored(p) or "–")
       local pt = ns.Item.TrendText(p)
       if pt and p.trend then
         if p.trend <= -0.03 then pt = "|cffff6b6b" .. pt .. "|r"

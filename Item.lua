@@ -360,6 +360,14 @@ end
 -- Demand levels, units bought per day.
 Item.DEMAND_LEVELS = { { 200, "sehr hoch" }, { 50, "hoch" }, { 10, "mittel" }, { 1, "niedrig" } }
 
+-- The demand level in its color: hoch / sehr hoch green, mittel white, niedrig / kaum red.
+function Item.DemandColored(e)
+  local text = Item.DemandText(e)
+  if not text then return nil end
+  local color = (text == "hoch" or text == "sehr hoch") and "|cff5fd38d" or (text == "mittel" and "|cffffffff" or "|cffff6b6b")
+  return color .. text .. "|r"
+end
+
 -- Saturation: are offers above the cheapest bought too? >= 50 %: unterversorgt, < 20 %:
 -- übersättigt (only the cheapest sells), between: ausgeglichen. Returns text, color; nil without.
 function Item.SaturationText(e)
