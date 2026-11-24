@@ -1119,14 +1119,21 @@ do
   end
 
   -- Forgets the quote (cancel: tell the server too); the next one asked by itself waits COOLDOWN.
-  function Fish.Drop(cancel, reason)
+  -- missed: someone was faster (the cheap units are gone) - nothing bought, no message, only
+  -- counted (Fish.missed, in the line under the chart) and a short pause before the next ask.
+  function Fish.Drop(cancel, reason, missed)
     local p = Fish.pending
     Fish.pending = nil
     if cancel and p and p.state ~= "buying" and C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
       pcall(C_AuctionHouse.CancelCommoditiesPurchase)
     end
-    Fish.cooldown = GetTime() + COOLDOWN
-    if reason then Fish.Note(reason) end
+    if missed then
+      Fish.missed = (Fish.missed or 0) + 1
+      Fish.cooldown = GetTime() + 1
+    else
+      Fish.cooldown = GetTime() + COOLDOWN
+      if reason then Fish.Note(reason) end
+    end
     ns.Safe(Fish.Refresh)
   end
 
@@ -1272,6 +1279,7 @@ do
       parts[#parts + 1] = M .. "Markt – Suche läuft|r"
     end
     parts[#parts + 1] = G .. "Budget|r " .. money(db.spent) .. " / " .. money(c.budget)
+    if (Fish.missed or 0) > 0 then parts[#parts + 1] = G .. "verpasst|r " .. Fish.missed end
     ui.fishLine.text:SetText(table.concat(parts, "  ·  "))
     -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
     local lies = plan and plan.baitLies or false
@@ -1378,7 +1386,7 @@ do
       if not total then
         why = "kein Preis erhalten"
       elseif total > p.sum * 1.01 then
-        why = "Preis gestiegen: " .. money(total) .. " statt " .. money(p.sum)
+        return Fish.Drop(true, nil, true) -- someone bought the cheap ones first
       elseif total > p.n * p.limit then
         why = "über der Fanggrenze: " .. money(total) .. " für " .. p.n .. " Stück"
       elseif Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
@@ -1395,7 +1403,7 @@ do
     end)
     ns.On("COMMODITY_PRICE_UNAVAILABLE", function()
       local p = Fish.pending
-      if p and p.state == "asking" then Fish.Drop(false, "Preis nicht verfügbar – Angebot weg") end
+      if p and p.state == "asking" then Fish.Drop(false, nil, true) end -- the offer is gone already
     end)
     ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
       local p = Fish.pending
