@@ -746,6 +746,8 @@ local function attachAuctions()
   if af.SelectItemKey then
     hooksecurefunc(af, "SelectItemKey", function(_, itemKey)
       local id = type(itemKey) == "table" and itemKey.itemID
+      -- already showing it (Blizzard selects the item again after every update): nothing to do
+      if id and ownDetail() and ns.ItemDetail.ItemID and ns.ItemDetail.ItemID() == id then return end
       if id and ns.ItemDetail then
         ns.Safe(ns.ItemDetail.Show, id, { anchor = AuctionHouseFrame, origin = AUCTIONS_ORIGIN, skin = "blizzard", itemKey = itemKey })
       end
