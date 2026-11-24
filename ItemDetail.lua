@@ -1281,7 +1281,8 @@ do
     local after = series and series.lastT or -math.huge
     for _, pt in ipairs(tailOf(id)) do
       if pt.t > after and pt.t >= v.axisStart then
-        v.tail[#v.tail + 1] = pt
+        -- a copy: the drawing adds its x, which must not end up in the saved variables
+        v.tail[#v.tail + 1] = { t = pt.t, p = pt.p, q = pt.q, src = pt.src }
         if pt.p > 0 then values[#values + 1] = pt.p end
         if pt.q and pt.q > qmax then qmax = pt.q end
         if pt.q and pt.q > 0 and (not qmin or pt.q < qmin) then qmin = pt.q end
