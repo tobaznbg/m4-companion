@@ -408,6 +408,26 @@ local function createButton()
       GameTooltip:Show()
     end)
     list:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- and "Tageshandel": the daily-rhythm pool of this house (DayTrade.lua)
+    local okD, trade = pcall(CreateFrame, "Button", "M4CompanionDayTradeTab", parent, "AuctionHouseFrameDisplayModeTabTemplate")
+    if not okD or not trade then okD, trade = pcall(CreateFrame, "Button", "M4CompanionDayTradeTab", parent, "UIPanelButtonTemplate") end
+    if okD and trade then
+      trade:SetPoint("TOPLEFT", list, "TOPRIGHT", 3, 0)
+      trade:SetText("Tageshandel")
+      if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, trade, 20, nil, 70) end
+      if PanelTemplates_DeselectTab then pcall(PanelTemplates_DeselectTab, trade) end
+      trade:SetScript("OnClick", function()
+        if ns.DayTrade and ns.DayTrade.Toggle then ns.Safe(ns.DayTrade.Toggle) end
+        if PanelTemplates_DeselectTab then pcall(PanelTemplates_DeselectTab, trade) end
+      end)
+      trade:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("Tageshandel")
+        GameTooltip:AddLine("Items mit Tagesrhythmus: wann kaufen, bis zu welchem Preis, wann zu welchem Preis einstellen.", 1, 1, 1, true)
+        GameTooltip:Show()
+      end)
+      trade:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
   end
 end
 
