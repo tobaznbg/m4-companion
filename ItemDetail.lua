@@ -766,6 +766,7 @@ do
     players = "andere Spieler (Cloud)", live = "andere Spieler (live)" }
   local TAIL_MAX = 200 -- live points kept per item and house
   local win, ui, shownID, ticker, pending
+  local liveTicker -- the search every second while shown at the auction house
   local draw, hover -- forward declared
   local used = {}
   local tails = {} -- "house:itemID" -> { { t, p, q, src }... } oldest first, this session
@@ -1486,13 +1487,22 @@ do
       end
     end)
     -- every 30 s while shown: the age in the head, the "jetzt" edge and the windows move on
+    -- and every second at the auction house: search the item again, so price and quantity move
+    -- live (read only; AHSearch keeps the game's throttle and shares it with the sniper, a
+    -- search still waiting is not queued twice - the redraw follows the result via Obs.OnRecord)
     f:HookScript("OnShow", function()
       if not ticker and C_Timer and C_Timer.NewTicker then
         ticker = C_Timer.NewTicker(30, function() ns.Safe(draw) end)
       end
+      if not liveTicker and C_Timer and C_Timer.NewTicker then
+        liveTicker = C_Timer.NewTicker(1, function()
+          if shownID and ns.AHSearch and ns.AHSearch.IsOpen() then ns.Safe(ns.AHSearch.Request, shownID) end
+        end)
+      end
     end)
     f:HookScript("OnHide", function()
       if ticker then ticker:Cancel(); ticker = nil end
+      if liveTicker then liveTicker:Cancel(); liveTicker = nil end
       if hover then hover(nil) end
       ns.Safe(Detail.UpdateDetailsButton)
     end)
