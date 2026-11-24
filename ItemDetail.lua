@@ -1170,13 +1170,12 @@ do
   -- click - first click asks, second click buys.
   Fish.autoBlocked = true
 
-  -- The price of our cheapest own offer of the item in the auction house (baits set and not
-  -- seen gone, own rows of the last search), nil without one.
+  -- The price of our cheapest own offer of the item in the auction house (own rows of the last
+  -- search), nil without one.
   function Fish.OwnMin(id)
+    -- only what the last search shows: a bait taken before any search saw it stays "not gone"
+    -- in the log and would block the asks for good
     local m
-    for _, e in ipairs(Fish.DB().log) do
-      if e.k == "bait" and e.i == id and not e.gone and (not m or e.p < m) then m = e.p end
-    end
     if Fish.rows and Fish.rows.id == id then
       for _, r in ipairs(Fish.rows.list or {}) do
         if (r.own or 0) > 0 and (not m or r.unit < m) then m = r.unit end
