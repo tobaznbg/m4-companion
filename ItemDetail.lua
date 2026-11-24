@@ -1304,7 +1304,7 @@ do
     local plan = Fish.Plan(shownID)
     if plan and plan.n > 0 then
       Fish.Ask(plan, false)
-    elseif not Fish.noBait and plan and plan.bait and not plan.baitLies and not (Fish.baitSent and GetTime() - Fish.baitSent < 5) then
+    elseif not Fish.noBait and plan and plan.bait then
       ns.Safe(Fish.Bait)
     end
     Fish.Refresh()
@@ -1479,10 +1479,6 @@ do
       look(ui.fishBtn, false, false, note or "noch keine Fanggrenze", nil)
     elseif Fish.noBait then
       look(ui.fishBtn, false, false, note or "Köder aus – warte auf Fang", nil)
-    elseif lies then
-      look(ui.fishBtn, false, false, note or ("Köder liegt (" .. money(plan.bait) .. ") – warte auf Biss"), nil)
-    elseif Fish.baitSent and now - Fish.baitSent < 5 then
-      look(ui.fishBtn, false, false, "Köder wird eingestellt …", nil)
     elseif have == 0 then
       look(ui.fishBtn, false, false, "kein Stück für den Köder in den Taschen", nil)
     elseif not loc then
