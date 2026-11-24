@@ -1336,55 +1336,61 @@ do
       end
       return Fish.Refresh()
     end
-    -- one button, the next step: a bait when none of ours lies (and no catch is seen), else the
-    -- price is asked at once - every click, whether or not a search showed a catch ("hammering":
-    -- the quote is the freshest look at the cheapest units there is). N: the catch the last
-    -- search saw, else 1; a quote over the catch limit is dropped silently (see the price event).
+    -- A fixed cycle, no search needed (the search does not show our own bait):
+    --   1 "bait": set a bait (1 unit at K)        - skipped with "Köder: aus"
+    --   2 "check": ask the price of the cheapest N units at once (N: the units at or under K the
+    --      last search showed, else 1) - at most K a unit counts, dearer goes back to 1
+    --   3 the answer fits -> the pending quote shows "Kaufen", the click buys; then back to 1
     local plan = Fish.Plan(shownID)
-    local catch = plan and plan.n > 0
-    -- Measured: while hammering every click's ask takes the throttle and the searches starve
-    -- (7 in 88 s) - bait state and catch sizes go stale. So the clicks alternate: when the last
-    -- search result is older than 1.5 s (and no catch is waiting), this click sends the search.
-    local api = C_AuctionHouse
-    if not catch and GetTime() - (Fish.stat.lastResults or 0) > 1.5 and api and api.SendSearchQuery and api.MakeItemKey then
-      local order = Enum and Enum.AuctionHouseSortOrder and Enum.AuctionHouseSortOrder.Price or 0
-      pcall(api.SendSearchQuery, api.MakeItemKey(shownID), { { sortOrder = order, reverseSort = false } }, true)
-      Fish.stat.lastResults = GetTime() -- one search per 1.5 s from the clicks, not one per click
-      return Fish.Refresh()
-    end
-    if not catch and not Fish.noBait and plan and plan.bait and not plan.baitLies and not Fish.baitAwait then
-      ns.Safe(Fish.Bait)
+    local K = Fish.BaitPrice(shownID, plan)
+    if not K then return Fish.Refresh() end
+    if (Fish.cycle or "bait") == "bait" and not Fish.noBait then
+      ns.Safe(Fish.Bait, K)
+      Fish.cycle = "check"
     else
-      local limit = (plan and plan.limit) or (Fish.lastLimit and Fish.lastLimit.id == shownID and Fish.lastLimit.limit)
-      -- our own bait as the cheapest offer: a probe for 1 unit would be that unit (the game does
-      -- not sell it, the buy fails) - the click asks for a fresh search at once instead
-      if limit then
-        local left = Fish.Cfg(shownID).budget - Fish.DB().spent
-        local n = catch and plan.n or 1
-        if catch or n * limit <= left then
-          Fish.Ask({ n = n, sum = catch and plan.sum or limit, limit = limit, baitLies = plan and plan.baitLies,
-            blind = not catch }, false)
+      local n = 0
+      if Fish.rows and Fish.rows.id == shownID then
+        for _, r in ipairs(Fish.rows.list or {}) do
+          if r.unit <= K then n = n + math.max(0, (r.qty or 0) - (r.own or 0)) end
         end
+      end
+      n = math.max(1, n)
+      local left = Fish.Cfg(shownID).budget - Fish.DB().spent
+      n = math.min(n, math.floor(left / K))
+      if n >= 1 then
+        Fish.Ask({ n = n, sum = n * K, limit = K, blind = true }, false)
       end
     end
     Fish.Refresh()
   end
 
+  -- The bait price K: from the plan (vendor + 25 %, under the cheapest foreign offer and the
+  -- catch limit), else the last one known for the item, else vendor + 25 %.
+  function Fish.BaitPrice(id, plan)
+    if plan and plan.bait then Fish.lastBait = { id = id, k = plan.bait } return plan.bait end
+    if Fish.lastBait and Fish.lastBait.id == id then return Fish.lastBait.k end
+    local e = ns.Item.Get(id)
+    if e and e.vendorSell and e.vendorSell > 0 then return math.ceil(e.vendorSell * 1.25) end
+  end
+
   -- The bait button: one unit at K for 2 h. The ledger books the post through its own hook.
-  function Fish.Bait()
+  function Fish.Bait(price)
     local api = C_AuctionHouse
     if inCombat() or not (ahOpen() and live() and api and api.PostCommodity) then return end
     local plan = Fish.Plan(shownID)
-    if not (plan and plan.bait) or plan.baitLies then return end
+    price = price or (plan and plan.bait)
+    if not price then return end
     local loc = Fish.BagSlot(shownID)
-    if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then
+    if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, price) then
       Fish.baitSent = GetTime()
       -- no second bait before a search has shown this one (fast clicks for a catch are safe)
       Fish.baitAwait = true
       local log = Fish.DB().log
       local own = Fish.OwnCost(shownID)
       -- own: the unit's cost when set (a later cheap buy must not change this bait's loss)
-      log[#log + 1] = { k = "bait", i = shownID, t = time(), p = plan.bait, dep = plan.dep or 0, own = own or plan.market }
+      local e = ns.Item.Get(shownID)
+      log[#log + 1] = { k = "bait", i = shownID, t = time(), p = price,
+        dep = (e and e.vendorSell or 0) * FISH_DEPOSIT, own = own or (plan and plan.market) }
     end
     Fish.Refresh()
   end
@@ -1523,36 +1529,32 @@ do
       if p.state == "asking" then
         look(ui.fishBtn, false, false, "Preis wird angefragt …", nil)
       elseif p.state == "confirm" then
-        look(ui.fishBtn, true, true, (p.bite and "Biss! " or "") .. "Bestätigen " .. money(p.total),
+        look(ui.fishBtn, true, true, string.format("3 Kaufen: %d × = ", p.n) .. money(p.total),
           string.format("%d Stück für %s kaufen (Plan %s)", p.n, money(p.total), money(p.sum)))
         ui.fishBtn.blink = p.bite
       else
         look(ui.fishBtn, false, false, "Kauf läuft …", nil)
       end
-    elseif Fish.stale and not (Fish.rows and Fish.rows.id == id) then
-      look(ui.fishBtn, true, false, "Preis prüfen", nil)
     elseif not open then
       look(ui.fishBtn, false, false, "Fischen", "nur am Auktionshaus")
     elseif combat then
       look(ui.fishBtn, false, false, "Fischen", "nicht im Kampf")
-    elseif plan and plan.n > 0 then
-      look(ui.fishBtn, true, true, string.format("%sKaufen: %d × bis %s = %s%s", bite and "Biss! " or "", plan.n, money(plan.top), money(plan.sum),
-        (plan.ownIn or 0) > 0 and string.format(" (inkl. %d eigene)", plan.ownIn) or ""),
-        Fish.autoBlocked and "Klick fragt den Preis an, der zweite Klick kauft" or "Klick fragt den Preis an")
-      ui.fishBtn.blink = bite
-    elseif plan and plan.catch > 0 then
-      look(ui.fishBtn, false, false, note or "Tagesbudget erreicht", "Rechtsklick auf die Zeile darüber: Budget")
-    elseif not (plan and plan.bait) then
-      look(ui.fishBtn, false, false, note or "noch keine Fanggrenze", nil)
-    elseif Fish.noBait or lies or Fish.baitAwait then
-      -- hammering: every click asks the price of the cheapest unit now
-      look(ui.fishBtn, true, false, note or ("Preis prüfen (bis " .. money(plan.limit) .. ")"), nil)
-    elseif have == 0 then
-      look(ui.fishBtn, false, false, "kein Stück für den Köder in den Taschen", nil)
-    elseif not loc then
-      look(ui.fishBtn, false, false, "Köder-Stück gerade gesperrt", nil)
     else
-      look(ui.fishBtn, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, "Köder setzen (" .. money(plan.bait) .. ")", nil)
+      -- the cycle (Fish.Click): 1 bait, 2 check the price, 3 buy (the pending quote above)
+      local K = Fish.BaitPrice(id, plan)
+      if not K then
+        look(ui.fishBtn, false, false, note or "kein Köderpreis (Händlerpreis unbekannt)", nil)
+      elseif (Fish.cycle or "bait") == "bait" and not Fish.noBait then
+        if have == 0 then
+          look(ui.fishBtn, false, false, "1 Köder: kein Stück in den Taschen", nil)
+        elseif not loc then
+          look(ui.fishBtn, false, false, "1 Köder: Stück gerade gesperrt", nil)
+        else
+          look(ui.fishBtn, true, false, "1 Köder setzen (" .. money(K) .. ")", nil)
+        end
+      else
+        look(ui.fishBtn, true, false, note or ("2 Preis prüfen (bis " .. money(K) .. ")"), nil)
+      end
     end
   end
 
@@ -1680,14 +1682,12 @@ do
       Fish.stat.quotes = Fish.stat.quotes + 1
       Fish.stat.lastQuote = string.format("%s für %d (Plan %s)", total and money(total) or "?", p.n, money(p.sum))
       if p.blind then
-        -- a probe: cheap enough -> confirm on the next click, else dropped without a word. The
-        -- game sells our own bait too: a probe at or above the price of a bait of ours still in
-        -- the auction house would buy that bait back (a loss of the cut, and the next click sets
-        -- the next bait) - only a price under every bait of ours counts.
-        -- (the game skips our own units in a quote - measured: bait at 1s67, quote for 1 unit 2s12)
+        -- the check of the cycle: at most the bait price a unit -> "Kaufen" on the next click;
+        -- dearer: dropped without a word, the cycle starts again (next click: a bait)
         if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
           Fish.stat.probes = (Fish.stat.probes or 0) + 1
           Fish.pending = nil
+          Fish.cycle = "bait"
           ns.Safe(Fish.Refresh)
           return
         end
@@ -1716,6 +1716,8 @@ do
       local p = Fish.pending
       if p and p.state == "asking" then Fish.Drop(false, nil, true) end -- the offer is gone already
     end)
+    ns.On("COMMODITY_PURCHASE_SUCCEEDED", function() Fish.cycle = "bait" end)
+    ns.On("COMMODITY_PURCHASE_FAILED", function() Fish.cycle = "bait" end)
     ns.On("COMMODITY_PURCHASE_SUCCEEDED", function()
       local p = Fish.pending
       if not (p and p.state == "buying") then return end
