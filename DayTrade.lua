@@ -145,7 +145,11 @@ local function state(itemID, r)
     local wait = hoursUntil(h, buyHour)
     s.phase = "wait"
     s.wait = wait
-    s.text, s.color = string.format("Kauf %d Uhr", buyHour), MUTED
+    -- expected profit with the capital: the cloud's per-unit profit (profitDay / maxQty, already
+    -- weighted with how often the rhythm held) for the units the capital buys at the limit
+    local qty = math.min(maxQty, math.floor(CAPITAL / math.max(limit, 1)))
+    s.profit = maxQty > 0 and qty * profitDay / maxQty or 0
+    s.text, s.color = string.format("~+%s · %d Uhr", money(s.profit), buyHour), MUTED
   end
   return s
 end
