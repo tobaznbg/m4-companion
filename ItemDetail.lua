@@ -1163,6 +1163,10 @@ do
 
   -- Diagnostics for "/m4 fisch": counters of what happened this session.
   Fish.stat = { results = 0, asks = 0, autoAsks = 0, quotes = 0, buys = 0, misses = 0 }
+  -- The game does not allow the price ask without a click in this client ("Interface-Aktion
+  -- fehlgeschlagen", the call silently does nothing): the ask always comes from the player's
+  -- click - first click asks, second click buys.
+  Fish.autoBlocked = true
 
   function Fish.Plan(id)
     local rows = Fish.rows
