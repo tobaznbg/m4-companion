@@ -1342,6 +1342,16 @@ do
     -- search saw, else 1; a quote over the catch limit is dropped silently (see the price event).
     local plan = Fish.Plan(shownID)
     local catch = plan and plan.n > 0
+    -- Measured: while hammering every click's ask takes the throttle and the searches starve
+    -- (7 in 88 s) - bait state and catch sizes go stale. So the clicks alternate: when the last
+    -- search result is older than 1.5 s (and no catch is waiting), this click sends the search.
+    local api = C_AuctionHouse
+    if not catch and GetTime() - (Fish.stat.lastResults or 0) > 1.5 and api and api.SendSearchQuery and api.MakeItemKey then
+      local order = Enum and Enum.AuctionHouseSortOrder and Enum.AuctionHouseSortOrder.Price or 0
+      pcall(api.SendSearchQuery, api.MakeItemKey(shownID), { { sortOrder = order, reverseSort = false } }, true)
+      Fish.stat.lastResults = GetTime() -- one search per 1.5 s from the clicks, not one per click
+      return Fish.Refresh()
+    end
     if not catch and not Fish.noBait and plan and plan.bait and not plan.baitLies and not Fish.baitAwait then
       ns.Safe(Fish.Bait)
     else
@@ -1666,12 +1676,6 @@ do
     ns.On("COMMODITY_PRICE_UPDATED", function(_, unitPrice, total)
       local p = Fish.pending
       if not (p and p.state == "asking") then return end -- not ours: Blizzard's buy dialog
-      -- Measured: while hammering, the asks take the throttle and searches starve (gaps up to
-      -- 23 s) - then the bait state and the catch sizes go stale. After every answer a search
-      -- goes to the front when the last result is older than 1.5 s: asks and searches alternate.
-      if GetTime() - (Fish.stat.lastResults or 0) > 1.5 and ns.AHSearch and ns.AHSearch.Request then
-        ns.Safe(ns.AHSearch.Request, p.itemID, nil, true)
-      end
       total = tonumber(total)
       Fish.stat.quotes = Fish.stat.quotes + 1
       Fish.stat.lastQuote = string.format("%s für %d (Plan %s)", total and money(total) or "?", p.n, money(p.sum))
