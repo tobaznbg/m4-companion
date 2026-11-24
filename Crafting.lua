@@ -870,10 +870,9 @@ local function productEntries(pid)
       -- not learned: the name greyed, like a recipe out of reach
       color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e,
       -- the profit per craft right in the row (the name is cut before it)
-      -- "(35 %) +40g 78s": margin on the material cost, then the profit
-      -- under the minimum margin the profit is grey (no coins either: not worth it)
-      value = (e.profit and e.onAH) and (((e.cost or 0) > 0 and string.format("|cff999999(%d %%)|r ",
-        math.floor(e.profit / e.cost * 100 + 0.5)) or "")
+      -- "<demand symbol> +40g 78s": the demand (same symbols as the auction house list), then the
+      -- profit; under the minimum margin the profit is grey (no coins either: not worth it)
+      value = (e.profit and e.onAH) and (((ns.Item.DemandIcon(ns.Item(e.itemID)) or "") .. " ")
         .. (e.profit < 0 and "|cffff6b6b-" or (((e.cost or 0) > 0 and e.profit / e.cost < ns.MinMargin()) and "|cff999999+" or "|cff5fd38d+"))
         .. money(math.floor(math.abs(e.profit) + 0.5)) .. "|r") or nil }
   end
