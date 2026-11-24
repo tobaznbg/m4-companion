@@ -778,8 +778,8 @@ end
 --     offer and F − 1: undercutters orient on the cheapest offer, and a bait just above the
 --     vendor price costs next to nothing when a bargain hunter takes it (the vendor would not
 --     have paid more) - the other bait setters at Schweres Leder use exactly that (1s50 -> 1s88).
---   N: foreign units at or under F and cheaper than our own cheapest offer (the game refuses a
---     purchase that would take an own unit), cheapest first, as many as the budget pays.
+--   N: foreign units at or under F and at most at the price of our own cheapest offer (the game
+--     refuses a purchase that would take an own unit), cheapest first, as the budget pays.
 -- Returns { market, dep, limit = F, bait = K, baitLies, catch (foreign units <= F), n, sum, top
 -- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
 Detail.FISH_DEPTH = 20
@@ -809,16 +809,17 @@ function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
   local low = (vendorSell and vendorSell > 0) and math.ceil(vendorSell * 1.25) or math.floor(p.market * 0.55)
   p.limit, p.bait = limit, math.max(1, math.min(limit - 1, cheapest and cheapest - 1 or limit - 1, low))
   -- The game sells the cheapest N units and refuses a purchase that would take an own one
-  -- ("DatabaseError"): N counts foreign units only in levels cheaper than our cheapest own
-  -- offer (our bait), cheapest first; the first level with an own unit ends the catch. A level
-  -- the budget no longer pays in full is the last.
+  -- ("DatabaseError"): N counts foreign units up to the price of our cheapest own offer (our
+  -- bait) - same price included, which order the game takes within one price shows in play -
+  -- cheapest first; dearer levels not. A level the budget no longer pays in full is the last.
   local left = p.left
   p.ownIn = 0
+  local ownFrom -- the price of our cheapest own offer: foreign ones up to it count, dearer not
   for _, r in ipairs(list) do
-    if r.unit > limit then break end
+    if r.unit > limit or (ownFrom and r.unit > ownFrom) then break end
     if (r.own or 0) > 0 then
       if r.unit <= p.bait then p.baitLies = true end
-      break
+      ownFrom = ownFrom or r.unit
     end
     local f = foreign(r)
     p.catch = p.catch + f
