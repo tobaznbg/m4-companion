@@ -1111,7 +1111,13 @@ do
       end
       b.own = bait.own or b.own
     end
-    b.worth = market and b.units * (market * (1 - FISH_CUT) - (dep or 0)) or nil
+    -- valued at the cloud's R (median price, changes about once a day), not at the live market:
+    -- that one moves with every search (our own baits and buys too) and made the result jump
+    local e = ns.Item.Get(id)
+    local ref = e and e.ref or market
+    b.ref = ref
+    b.avg = b.units > 0 and b.paid / b.units or nil
+    b.worth = ref and b.units * (ref * (1 - FISH_CUT) - (dep or 0)) or nil
     b.result = b.worth and (b.worth - b.paid - b.baitCost) or nil
     return b
   end
@@ -1404,6 +1410,9 @@ do
     -- today's result (details in the line's tooltip)
     local bal = Fish.Balance(id, plan and plan.market, plan and plan.dep)
     if bal and bal.result then
+      if bal.avg and bal.ref then
+        parts[#parts + 1] = string.format("%sØ Einkauf|r %s %s(R %s)|r", G, money(bal.avg), M, money(bal.ref))
+      end
       parts[#parts + 1] = string.format("%sHeute|r %s%s%s|r", G, bal.result >= 0 and "|cff5fd38d+" or "|cffff6b6b−",
         money(math.abs(bal.result)), "")
     end
@@ -1729,7 +1738,7 @@ do
         GameTooltip:AddLine("Heute")
         GameTooltip:AddDoubleLine(string.format("Fänge: %d (%d Stück)", bal.catches, bal.units), money(bal.paid), 1, 1, 1, 1, 1, 1)
         if bal.worth then
-          GameTooltip:AddDoubleLine("Wert zum Markt (nach Gebühr + Einstellgebühr)", money(bal.worth), 1, 1, 1, 1, 1, 1)
+          GameTooltip:AddDoubleLine("Wert zu R " .. money(bal.ref or 0) .. " (nach Gebühr + Einstellgebühr)", money(bal.worth), 1, 1, 1, 1, 1, 1)
         end
         GameTooltip:AddDoubleLine(string.format("Köder: %d gesetzt, %d verkauft, %d abgelaufen", bal.baits, bal.sold, bal.lost),
           "−" .. money(bal.baitCost), 1, 1, 1, 1, 0.42, 0.42)
