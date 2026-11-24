@@ -809,6 +809,8 @@ do
     grid = function() local t = tex("BACKGROUND", 3, 1, 1, 1, 0.08); thin(t); return t end,
     day = function() local t = tex("BACKGROUND", 4, 1, 1, 1, 0.22); thin(t, true); return t end,
     bar = function() return tex("BORDER", 0, 1, 1, 1, 0.13) end,
+    -- the live tail's quantities: lighter, so the newest supply stands out
+    tailBar = function() return tex("BORDER", 1, TAIL_RGB[1], TAIL_RGB[2], TAIL_RGB[3], 0.35) end,
     dash = function() local t = tex("ARTWORK", 1, 1, 1, 1, 1); thin(t); return t end,
     mark = function() return tex("OVERLAY", 0, 1, 1, 1, 1) end,
     line = function()
@@ -1146,7 +1148,8 @@ do
     if color and color.hex then name = color.hex .. name .. "|r" end
     ui.name:SetText(name .. "  " .. ns.Style.MUTED .. ns.AuctionHouse.Name() .. "|r")
     local G, SEP = "|cffffd100", "      "
-    local parts = { G .. "jetzt|r " .. (e.now and money(e.now) or (ns.Style.MUTED .. "nicht im AH|r")) }
+    local parts = { G .. "jetzt|r " .. (e.now and money(e.now) or (ns.Style.MUTED .. "nicht im AH|r"))
+      .. ((e.now and e.quantity and e.quantity > 0) and (" · " .. count(e.quantity) .. " Stück") or "") }
     if #values > 0 then
       local lo, hi = values[1], values[1]
       for _, p in ipairs(values) do lo, hi = math.min(lo, p), math.max(hi, p) end
@@ -1199,6 +1202,7 @@ do
       if pt.t > after and pt.t >= v.axisStart then
         v.tail[#v.tail + 1] = pt
         if pt.p > 0 then values[#values + 1] = pt.p end
+        if pt.q and pt.q > qmax then qmax = pt.q end
       end
     end
     drawHead(id, e, values, rng)
@@ -1276,6 +1280,18 @@ do
           bar:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x0 + 0.5, 1)
           bar:SetSize(math.max(1, x1 - x0 - 1), math.max(1, (barZone - 2) * q / qmax))
         end
+      end
+    end
+    -- the live points' quantities: each bar reaches to the next point (or the right edge)
+    for k, pt in ipairs(v.tail) do
+      if pt.q and pt.q > 0 and qmax > 0 then
+        local x0 = math.max(0, X(pt.t))
+        local nxt = v.tail[k + 1]
+        local x1 = math.min(w, nxt and X(nxt.t) or w)
+        local bar = take("tailBar")
+        bar:ClearAllPoints()
+        bar:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x0 + 0.5, 1)
+        bar:SetSize(math.max(2, x1 - x0 - 1), math.max(1, (barZone - 2) * pt.q / qmax))
       end
     end
     ui.qty:ClearAllPoints()
