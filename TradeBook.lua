@@ -1167,7 +1167,7 @@ local function buildStock(page)
     title = "Herkunft",
     groupLabels = { "Bestand", "Einkauf", "Erlös (nach Gebühr)", "Marge", "Buchgewinn" },
     itemLabels = { "Stück", "Einkauf / Stk.", "Einkauf", "Erlös / Stk.", "Erlös", "Marge", "Buchgewinn" },
-    listCols = { { "Item", 20, "LEFT", 150 }, { "Stück", 200, "RIGHT" }, { "Wert", 268, "RIGHT" }, { "Buchgewinn", 338, "RIGHT" } },
+    listCols = { { "Item", 20, "LEFT", 130 }, { "Stück", 168, "RIGHT" }, { "Wert", 240, "RIGHT" }, { "Buchgewinn", 315, "RIGHT" } },
     balanceLabels = { "Gold", "AH Transit", "Ware (AH-Wert)", "Zusammen", "Buchgewinn Ware" },
     collect = collectStock,
   })
