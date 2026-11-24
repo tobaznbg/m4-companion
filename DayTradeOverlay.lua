@@ -9,7 +9,6 @@ local ADDON, ns = ...
 local Overlay = {}
 ns.DayTradeOverlay = Overlay
 
-local CAPITAL = 250000 -- copper: the money the buy suggestions are planned with (25g)
 local MAX_LINES = 5
 local MIN_PROFIT = 30000 -- copper: a buy suggestion under 3g expected profit is not worth the trip
 local WIDTH = 290
@@ -21,31 +20,6 @@ local function money(c) return ns.FormatMoney(math.floor((c or 0) + 0.5), true) 
 local function settings()
   ns.db.ui = ns.db.ui or {}
   return ns.db.ui
-end
-
--- Buying one item with the capital: along its known price levels up to the buy limit and the
--- daily maximum. Without levels (cloud snapshot only) every unit is priced at the cheapest one
--- (approx = true). Returns units, cost, expected profit after cut and deposit at the ask.
-local function plan(s, capital)
-  local o = s.offer
-  local net = s.ask * (1 - ns.DayTrade.CUT) - s.dep
-  local qty, cost = 0, 0
-  if o.levels and #o.levels > 0 then
-    local levels = {}
-    for i, l in ipairs(o.levels) do levels[i] = l end
-    table.sort(levels, function(a, b) return a.unit < b.unit end)
-    for _, l in ipairs(levels) do
-      if l.unit > s.limit then break end
-      local take = math.min(l.count, s.maxQty - qty, math.floor((capital - cost) / l.unit))
-      if take <= 0 then break end
-      qty, cost = qty + take, cost + take * l.unit
-    end
-    return qty, cost, qty * net - cost, false
-  end
-  if not o.cheapest or o.cheapest > s.limit then return 0, 0, 0, false end
-  qty = math.min(s.maxQty, math.floor(capital / o.cheapest))
-  cost = qty * o.cheapest
-  return qty, cost, qty * net - cost, true
 end
 
 -- "Cloud 34m · Scan 21m · Spieler 3m": the age of each source, colored by it. "Spieler" is the
@@ -134,12 +108,12 @@ local function refresh()
     local buys = {}
     for _, s in ipairs(states) do
       if s.phase == "buy" and s.offer.cheapest and s.offer.cheapest <= s.limit then
-        local qty, cost, profit, approx = plan(s, CAPITAL)
+        local qty, cost, profit, approx = ns.DayTrade.Plan(s)
         if qty > 0 and profit >= MIN_PROFIT then buys[#buys + 1] = { s = s, qty = qty, cost = cost, profit = profit, approx = approx } end
       end
     end
     table.sort(buys, function(a, b) return a.profit > b.profit end)
-    add({ head = string.format("Kaufen %s%dg|r", MUTED, math.floor(CAPITAL / 10000)) })
+    add({ head = string.format("Kaufen %s%dg|r", MUTED, math.floor(ns.DayTrade.CAPITAL / 10000)) })
     if #buys == 0 then add({ text = MUTED .. "–|r" }) end
     for i = 1, math.min(#buys, MAX_LINES) do
       local b = buys[i]

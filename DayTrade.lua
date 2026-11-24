@@ -20,6 +20,7 @@ ns.DayTrade = Trade
 local WINDOW_HOURS = 3
 local CUT = 0.05
 local DEPOSIT_2H = 0.05
+local CAPITAL = 250000 -- copper: the money a buy is planned with (25g), tab and overlay alike
 local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100"
 
 local page, split, selected
@@ -76,6 +77,32 @@ local function ago(t)
   return string.format("vor %d h", math.floor(s / 3600 + 0.5))
 end
 
+-- Buying one item with the capital: along its known price levels up to the buy limit and the
+-- daily maximum. Without levels (cloud snapshot only) every unit is priced at the cheapest one
+-- (approx = true). Returns units, cost, expected profit after cut and deposit at the ask.
+function Trade.Plan(s, capital)
+  capital = capital or CAPITAL
+  local o = s.offer
+  local net = s.ask * (1 - CUT) - s.dep
+  local qty, cost = 0, 0
+  if o.levels and #o.levels > 0 then
+    local levels = {}
+    for i, l in ipairs(o.levels) do levels[i] = l end
+    table.sort(levels, function(a, b) return a.unit < b.unit end)
+    for _, l in ipairs(levels) do
+      if l.unit > s.limit then break end
+      local take = math.min(l.count, s.maxQty - qty, math.floor((capital - cost) / l.unit))
+      if take <= 0 then break end
+      qty, cost = qty + take, cost + take * l.unit
+    end
+    return qty, cost, qty * net - cost, false
+  end
+  if not o.cheapest or o.cheapest > s.limit then return 0, 0, 0, false end
+  qty = math.min(s.maxQty, math.floor(capital / o.cheapest))
+  cost = qty * o.cheapest
+  return qty, cost, qty * net - cost, true
+end
+
 -- The state of one pool item now: { phase = "buy"|"sell"|"wait", text, color, … }.
 local function state(itemID, r)
   local buyHour, sellHour, limit, ask, maxQty, profitDay = r[1], r[2], r[3], r[4], r[5], r[6]
@@ -91,7 +118,11 @@ local function state(itemID, r)
   if inWindow(h, buyHour) then
     s.phase = "buy"
     if o.cheapest and o.cheapest <= limit then
-      s.text, s.color = o.units and o.units > 0 and string.format("kaufen (%d)", math.min(o.units, maxQty)) or "kaufen", GREEN
+      -- the profit the capital would bring now (sorts the group, see entries)
+      local qty, _, profit, approx = Trade.Plan(s)
+      s.profit = qty > 0 and profit or 0
+      s.text = (approx and "~" or "") .. (s.profit >= 0 and "+" or "") .. money(s.profit)
+      s.color = s.profit > 0 and GREEN or MUTED
     elseif o.cheapest then
       s.text, s.color = "zu teuer", RED
     else
@@ -129,7 +160,7 @@ function Trade.States()
   end
   return out
 end
-Trade.CUT, Trade.Ago = CUT, ago
+Trade.CUT, Trade.Ago, Trade.CAPITAL = CUT, ago, CAPITAL
 
 -- Card -------------------------------------------------------------------------------------
 
@@ -238,6 +269,10 @@ local function entries()
     local list = byPhase[g[1]]
     if #list > 0 then
       table.sort(list, function(a, b)
+        -- buy now: the best profit with the capital first, the too expensive ones last
+        if g[1] == "buy" and (a.profit or -math.huge) ~= (b.profit or -math.huge) then
+          return (a.profit or -math.huge) > (b.profit or -math.huge)
+        end
         if (a.wait or 0) ~= (b.wait or 0) then return (a.wait or 0) < (b.wait or 0) end
         return a.profitDay > b.profitDay
       end)
