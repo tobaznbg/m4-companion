@@ -1315,7 +1315,7 @@ do
     local plan = Fish.Plan(shownID)
     if plan and plan.n > 0 then
       Fish.Ask(plan, false)
-    elseif not Fish.noBait and plan and plan.bait then
+    elseif not Fish.noBait and plan and plan.bait and not plan.baitLies and not Fish.baitAwait then
       ns.Safe(Fish.Bait)
     end
     Fish.Refresh()
@@ -1330,6 +1330,8 @@ do
     local loc = Fish.BagSlot(shownID)
     if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then
       Fish.baitSent = GetTime()
+      -- no second bait before a search has shown this one (fast clicks for a catch are safe)
+      Fish.baitAwait = true
       local log = Fish.DB().log
       local own = Fish.OwnCost(shownID)
       -- own: the unit's cost when set (a later cheap buy must not change this bait's loss)
@@ -1491,6 +1493,8 @@ do
       look(ui.fishBtn, false, false, note or "noch keine Fanggrenze", nil)
     elseif Fish.noBait then
       look(ui.fishBtn, false, false, note or "Köder aus – warte auf Fang", nil)
+    elseif lies or Fish.baitAwait then
+      look(ui.fishBtn, false, false, note or "warte auf Fang", nil)
     elseif have == 0 then
       look(ui.fishBtn, false, false, "kein Stück für den Köder in den Taschen", nil)
     elseif not loc then
@@ -1522,6 +1526,7 @@ do
     if not (itemID and itemID == shownID and api and api.GetNumCommoditySearchResults) then return end
     Fish.rows = { id = itemID, list = readRows(itemID) }
     Fish.stale = nil
+    Fish.baitAwait = nil
     -- the first result after setting a bait ends "Köder wird eingestellt"
     if Fish.baitSent and GetTime() - Fish.baitSent > 0.5 then Fish.baitSent = nil end
     -- A set bait that a search no longer shows as an own offer at its price has left the
