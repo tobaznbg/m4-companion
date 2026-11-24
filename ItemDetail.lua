@@ -1092,48 +1092,32 @@ do
     return db
   end
 
-  -- Today's result of baiting and fishing one item, valued at the market price now:
-  --   catches: units and what they cost; their worth = units x (market after cut - deposit)
-  --   baits: a sold bait is a real loss against what the unit cost the player (own cost from the
-  --   ledger, Profit.UnitCost; the market price only without one): cost − what the bait brought
-  --   after the cut; an expired or cancelled one lost its deposit (from the ledger's mails: a
-  --   sale shows up when its mail arrives, up to an hour later)
-  -- Returns { units, paid, worth, baits, sold, lost, baitCost, result } or nil without anything.
-  function Fish.Balance(id, market, dep)
-    local log = Fish.DB().log
-    local b = { units = 0, paid = 0, baits = 0, sold = 0, lost = 0, baitCost = 0, catches = 0 }
-    local baits = {}
-    for _, e in ipairs(log) do
-      if e.i == id and e.k == "catch" then
-        b.catches, b.units, b.paid = b.catches + 1, b.units + (e.n or 0), b.paid + (e.c or 0)
-      elseif e.i == id and e.k == "bait" then
+  -- Today's result of one item, plain (Tobias' definition):
+  --   baits     baits set today
+  --   burned    baits gone without a deal: a bait round (from one bait to the next) with no buy
+  --             in it; the round of the last bait is still open and not counted
+  --   units, paid, avg   the deals: units bought, what they cost, the average unit price
+  --   med       the market value: median of yesterday's hourly cheapest offers (cloud)
+  --   result    units x med - paid (before the auction cut)
+  -- nil without a bait or a deal today.
+  function Fish.Balance(id)
+    local b = { units = 0, paid = 0, baits = 0, burned = 0 }
+    local open, deal = false, false
+    for _, e in ipairs(Fish.DB().log) do
+      if e.i == id and e.k == "bait" then
         b.baits = b.baits + 1
-        baits[#baits + 1] = e
+        if open and not deal then b.burned = b.burned + 1 end
+        open, deal = true, false
+      elseif e.i == id and e.k == "catch" then
+        b.units, b.paid = b.units + (e.n or 0), b.paid + (e.c or 0)
+        deal = true
       end
     end
-    if b.catches == 0 and b.baits == 0 then return nil end
-    -- counted live, from what the searches see (no waiting for the mails):
-    --   a bait set costs its deposit; gone from the auction house within its 2 h it was taken:
-    --   then it costs what it was below the own cost at setting (cost - price after the cut),
-    --   the deposit comes back; gone after 2 h it expired: the deposit stays lost
-    for _, bait in ipairs(baits) do
-      if bait.gone and bait.gone - bait.t < FISH_BAIT_LIFE then
-        b.sold = b.sold + 1
-        b.baitCost = b.baitCost + math.max(0, (bait.own or market or 0) - bait.p * (1 - FISH_CUT))
-      else
-        if bait.gone then b.lost = b.lost + 1 end
-        b.baitCost = b.baitCost + (bait.dep or 0)
-      end
-      b.own = bait.own or b.own
-    end
-    -- valued at the cloud's R (median price, changes about once a day), not at the live market:
-    -- that one moves with every search (our own baits and buys too) and made the result jump
+    if b.baits == 0 and b.units == 0 then return nil end
+    b.avg = b.units > 0 and math.floor(b.paid / b.units + 0.5) or nil
     local e = ns.Item.Get(id)
-    local ref = e and e.ref or market
-    b.ref = ref
-    b.avg = b.units > 0 and b.paid / b.units or nil
-    b.worth = ref and b.units * (ref * (1 - FISH_CUT) - (dep or 0)) or nil
-    b.result = b.worth and (b.worth - b.paid - b.baitCost) or nil
+    b.med = e and e.medYesterday or nil
+    b.result = b.med and (b.units * b.med - b.paid) or nil
     return b
   end
 
@@ -1539,20 +1523,19 @@ do
     else
       parts[#parts + 1] = M .. "Markt – Suche läuft|r"
     end
-    parts[#parts + 1] = G .. "heute gekauft|r " .. money(db.spent)
     local first = #parts -- the rest goes on a second line
     if (Fish.missed or 0) > 0 then parts[#parts + 1] = G .. "verpasst|r " .. Fish.missed end
     -- today's result (details in the line's tooltip)
-    local bal = Fish.Balance(id, plan and plan.market, plan and plan.dep)
-    if bal and bal.avg and bal.ref then
-      parts[#parts + 1] = string.format("%sØ Einkauf|r %s %s(R %s)|r", G, money(bal.avg), M, money(bal.ref))
-    end
-    -- the result is always shown (nothing done today: ±0)
-    local result = bal and bal.result or 0
-    parts[#parts + 1] = string.format("%sHeute|r %s%s|r", G, result > 0 and "|cff5fd38d+" or (result < 0 and "|cffff6b6b−" or "±"),
-      money(math.abs(result)))
-    if bal then
-      parts[#parts + 1] = string.format("%sKöder|r %d %s(%d weggekauft)|r", G, bal.baits, M, bal.sold)
+    local bal = Fish.Balance(id)
+    parts[#parts + 1] = string.format("%sKöder verbrannt|r %d %s(von %d)|r", G, bal and bal.burned or 0, M, bal and bal.baits or 0)
+    parts[#parts + 1] = string.format("%sDeals|r %d Stück %s", G, bal and bal.units or 0,
+      bal and bal.avg and ("Ø " .. money(bal.avg)) or "")
+    local result = bal and bal.result
+    if result then
+      parts[#parts + 1] = string.format("%sGewinn|r %s%s|r %s(Median gestern %s)|r", G,
+        result > 0 and "|cff5fd38d+" or (result < 0 and "|cffff6b6b−" or "±"), money(math.abs(result)), M, money(bal.med))
+    elseif bal and bal.units > 0 then
+      parts[#parts + 1] = G .. "Gewinn|r " .. M .. "– (kein Median gestern)|r"
     end
     local line1, line2 = {}, {}
     for k, part in ipairs(parts) do
@@ -2044,24 +2027,20 @@ do
         .. "gekauft wird, bringt nach Gebühr und Einstellgebühr den Mindestgewinn. Köder: 1 Stück zu Händlerpreis + 25 % (höchstens 1c unter dem günstigsten fremden Angebot und unter der Fanggrenze).", 1, 1, 1, true)
       -- today's balance of the shown item
       local plan = shownID and Fish.Plan(shownID)
-      local bal = shownID and Fish.Balance(shownID, plan and plan.market, plan and plan.dep)
+      local bal = shownID and Fish.Balance(shownID)
       if bal then
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Heute")
-        GameTooltip:AddDoubleLine(string.format("Fänge: %d (%d Stück)", bal.catches, bal.units), money(bal.paid), 1, 1, 1, 1, 1, 1)
-        if bal.worth then
-          GameTooltip:AddDoubleLine("Wert zu R " .. money(bal.ref or 0) .. " (nach Gebühr + Einstellgebühr)", money(bal.worth), 1, 1, 1, 1, 1, 1)
-        end
-        GameTooltip:AddDoubleLine(string.format("Köder: %d gesetzt, %d verkauft, %d abgelaufen", bal.baits, bal.sold, bal.lost),
-          "−" .. money(bal.baitCost), 1, 1, 1, 1, 0.42, 0.42)
-        if bal.own then
-          GameTooltip:AddLine("Verkaufter Köder = Einstand " .. money(bal.own) .. " minus Erlös nach Gebühr", 0.6, 0.6, 0.62, true)
-        end
-        if bal.result then
-          GameTooltip:AddDoubleLine("Ergebnis", (bal.result >= 0 and "+" or "−") .. money(math.abs(bal.result)),
+        GameTooltip:AddDoubleLine(string.format("Köder: %d gesetzt, %d verbrannt", bal.baits, bal.burned), "", 1, 1, 1)
+        GameTooltip:AddLine("Verbrannt: weggekauft, ohne dass bis zum nächsten Köder ein Deal kam.", 0.6, 0.6, 0.62, true)
+        GameTooltip:AddDoubleLine(string.format("Deals: %d Stück%s", bal.units, bal.avg and (" zu Ø " .. money(bal.avg)) or ""),
+          money(bal.paid), 1, 1, 1, 1, 1, 1)
+        if bal.med then
+          GameTooltip:AddDoubleLine("Marktwert (Median gestern " .. money(bal.med) .. ")", money(bal.units * bal.med), 1, 1, 1, 1, 1, 1)
+          GameTooltip:AddDoubleLine("Gewinn = Marktwert − Deals", (bal.result >= 0 and "+" or "−") .. money(math.abs(bal.result)),
             1, 0.82, 0, bal.result >= 0 and 0.37 or 1, bal.result >= 0 and 0.83 or 0.42, bal.result >= 0 and 0.55 or 0.42)
+          GameTooltip:AddLine("vor Auktionsgebühr", 0.6, 0.6, 0.62)
         end
-        GameTooltip:AddLine("Verkaufte Köder erscheinen erst mit ihrer Post (bis zu 1 h später).", 0.6, 0.6, 0.62, true)
       end
       GameTooltip:AddLine("Rechtsklick: Mindestgewinn", 0.6, 0.6, 0.62)
       GameTooltip:Show()
