@@ -735,6 +735,32 @@ local function attachAuctions()
   local layer = CreateFrame("Frame", nil, af)
   af.m4Rows = layer
   ns.Safe(attachCancelButton, af)
+  -- Blizzard fills the list anew whenever the own auctions update (after every cancel, every
+  -- query) and jumps to the top: the scroll position is kept when it is the same list again
+  -- (about as many entries: one more or less after a cancel or a new auction)
+  local list = auctionsList(af)
+  local box = list and rawget(list, "ScrollBox")
+  if type(box) == "table" and box.SetDataProvider and box.GetScrollPercentage and not box.m4KeepScroll then
+    box.m4KeepScroll = true
+    local lastPct, lastSize = 0, 0
+    local function size(b)
+      local dp = b.GetDataProvider and b:GetDataProvider()
+      return dp and dp.GetSize and dp:GetSize() or 0
+    end
+    if box.RegisterCallback and BaseScrollBoxEvents then
+      box:RegisterCallback(BaseScrollBoxEvents.OnScroll, function()
+        local ok, pct = pcall(box.GetScrollPercentage, box)
+        if ok and pct then lastPct, lastSize = pct, size(box) end
+      end, {})
+    end
+    hooksecurefunc(box, "SetDataProvider", function(b)
+      local n = size(b)
+      if lastPct > 0 and lastSize > 0 and math.abs(n - lastSize) <= 3 then
+        local pct = lastPct
+        C_Timer.After(0, function() pcall(b.SetScrollPercentage, b, pct) end)
+      end
+    end)
+  end
   -- after Blizzard's own OnShow (which sets its layout): ours on top
   af:HookScript("OnShow", function() ns.Safe(installColumns, af) end)
   if af:IsShown() then ns.Safe(installColumns, af) end
