@@ -11,6 +11,7 @@ ns.DayTradeOverlay = Overlay
 
 local CAPITAL = 250000 -- copper: the money the buy suggestions are planned with (25g)
 local MAX_LINES = 5
+local MIN_PROFIT = 30000 -- copper: a buy suggestion under 3g expected profit is not worth the trip
 local WIDTH = 290
 local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100" -- luacheck: ignore RED
 
@@ -131,7 +132,7 @@ local function refresh()
     for _, s in ipairs(states) do
       if s.phase == "buy" and s.offer.cheapest and s.offer.cheapest <= s.limit then
         local qty, cost, profit, approx = plan(s, CAPITAL)
-        if qty > 0 and profit > 0 then buys[#buys + 1] = { s = s, qty = qty, cost = cost, profit = profit, approx = approx } end
+        if qty > 0 and profit >= MIN_PROFIT then buys[#buys + 1] = { s = s, qty = qty, cost = cost, profit = profit, approx = approx } end
       end
     end
     table.sort(buys, function(a, b) return a.profit > b.profit end)
