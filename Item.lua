@@ -94,8 +94,10 @@ local function epoch(iso)
       -- time() reads the table as local time; shift by the local UTC offset.
       local now = time()
       local offset = now - time(date("!*t", now))
-      t = time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = tonumber(h),
-        min = tonumber(mi), sec = tonumber(s), isdst = false }) + offset
+      -- nil for a date the client cannot represent locally (m4d's empty shell carries 1970-01-01)
+      local local_ = time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = tonumber(h),
+        min = tonumber(mi), sec = tonumber(s), isdst = false })
+      t = local_ and local_ + offset or false
     end
     epochCache[iso] = t
   end
