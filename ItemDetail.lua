@@ -1065,10 +1065,55 @@ do
     ns.db.fish = ns.db.fish or {}
     local db = ns.db.fish
     local today = date("%Y-%m-%d")
-    if db.day ~= today then db.day, db.spent = today, 0 end
+    if db.day ~= today then db.day, db.spent, db.log = today, 0, {} end
     db.spent = db.spent or 0
+    -- today's own baits and catches: { k = "bait"|"catch", i, t, p (bait price), dep, n, c }
+    db.log = db.log or {}
     db.items = db.items or {}
     return db
+  end
+
+  -- Today's result of baiting and fishing one item, valued at the market price now:
+  --   catches: units and what they cost; their worth = units x (market after cut - deposit)
+  --   baits: a sold bait brought less than the market (the gap after cut is its cost), an
+  --   expired or cancelled one lost its deposit (from the ledger's mails: a sale shows up when
+  --   its mail arrives, up to an hour later)
+  -- Returns { units, paid, worth, baits, sold, lost, baitCost, result } or nil without anything.
+  function Fish.Balance(id, market, dep)
+    local log = Fish.DB().log
+    local b = { units = 0, paid = 0, baits = 0, sold = 0, lost = 0, baitCost = 0, catches = 0 }
+    local baits = {}
+    for _, e in ipairs(log) do
+      if e.i == id and e.k == "catch" then
+        b.catches, b.units, b.paid = b.catches + 1, b.units + (e.n or 0), b.paid + (e.c or 0)
+      elseif e.i == id and e.k == "bait" then
+        b.baits = b.baits + 1
+        baits[#baits + 1] = e
+      end
+    end
+    if b.catches == 0 and b.baits == 0 then return nil end
+    local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
+    local used = {}
+    for _, bait in ipairs(baits) do
+      for k, e in ipairs(events) do
+        if not used[k] and e.i == id and (e.u or 1) == 1 and (e.t or 0) >= bait.t then
+          if e.k == "sale" and math.abs((e.c or 0) - bait.p) <= 1 then
+            used[k] = true
+            b.sold = b.sold + 1
+            if market then b.baitCost = b.baitCost + math.max(0, market - bait.p) * (1 - FISH_CUT) end
+            break
+          elseif e.k == "expired" or e.k == "cancelled" then
+            used[k] = true
+            b.lost = b.lost + 1
+            b.baitCost = b.baitCost + (bait.dep or 0)
+            break
+          end
+        end
+      end
+    end
+    b.worth = market and b.units * (market * (1 - FISH_CUT) - (dep or 0)) or nil
+    b.result = b.worth and (b.worth - b.paid - b.baitCost) or nil
+    return b
   end
 
   -- read only: an item gets its own entry only once a figure is changed
@@ -1204,7 +1249,11 @@ do
     local plan = Fish.Plan(shownID)
     if not (plan and plan.bait) or plan.baitLies then return end
     local loc = Fish.BagSlot(shownID)
-    if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then Fish.baitSent = GetTime() end
+    if loc and pcall(api.PostCommodity, loc, FISH_DURATION, 1, plan.bait) then
+      Fish.baitSent = GetTime()
+      local log = Fish.DB().log
+      log[#log + 1] = { k = "bait", i = shownID, t = time(), p = plan.bait, dep = plan.dep or 0 }
+    end
     Fish.Refresh()
   end
 
@@ -1285,6 +1334,12 @@ do
     end
     parts[#parts + 1] = G .. "Budget|r " .. money(db.spent) .. " / " .. money(c.budget)
     if (Fish.missed or 0) > 0 then parts[#parts + 1] = G .. "verpasst|r " .. Fish.missed end
+    -- today's result (details in the line's tooltip)
+    local bal = Fish.Balance(id, plan and plan.market, plan and plan.dep)
+    if bal and bal.result then
+      parts[#parts + 1] = string.format("%sHeute|r %s%s%s|r", G, bal.result >= 0 and "|cff5fd38d+" or "|cffff6b6b−",
+        money(math.abs(bal.result)), "")
+    end
     ui.fishLine.text:SetText(table.concat(parts, "  ·  "))
     -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
     local lies = plan and plan.baitLies or false
@@ -1416,6 +1471,7 @@ do
       Fish.pending = nil
       local db = Fish.DB()
       db.spent = db.spent + (p.total or 0) -- the ledger books the buy itself (Ledger.lua hooks)
+      db.log[#db.log + 1] = { k = "catch", i = p.itemID, t = time(), n = p.n, c = p.total or 0 }
       Fish.cooldown = GetTime() + COOLDOWN
       Fish.autoKey = nil
       Fish.Note(string.format("gekauft: %d Stück für %s", p.n, money(p.total or 0)))
@@ -1556,7 +1612,25 @@ do
       GameTooltip:SetOwner(self, "ANCHOR_TOP")
       GameTooltip:AddLine("Köder und Fischen")
       GameTooltip:AddLine("Markt: erste Preisstufe mit " .. Detail.FISH_DEPTH .. " fremden Stück davor und darin. Fang bis: was darunter "
-        .. "gekauft wird, bringt nach Gebühr und Einstellgebühr den Mindestgewinn. Köder: 1 Stück einen Kupfer unter der Fanggrenze.", 1, 1, 1, true)
+        .. "gekauft wird, bringt nach Gebühr und Einstellgebühr den Mindestgewinn. Köder: 1 Stück einen Kupfer unter dem günstigsten fremden Angebot (höchstens unter der Fanggrenze).", 1, 1, 1, true)
+      -- today's balance of the shown item
+      local plan = shownID and Fish.Plan(shownID)
+      local bal = shownID and Fish.Balance(shownID, plan and plan.market, plan and plan.dep)
+      if bal then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Heute")
+        GameTooltip:AddDoubleLine(string.format("Fänge: %d (%d Stück)", bal.catches, bal.units), money(bal.paid), 1, 1, 1, 1, 1, 1)
+        if bal.worth then
+          GameTooltip:AddDoubleLine("Wert zum Markt (nach Gebühr + Einstellgebühr)", money(bal.worth), 1, 1, 1, 1, 1, 1)
+        end
+        GameTooltip:AddDoubleLine(string.format("Köder: %d gesetzt, %d verkauft, %d abgelaufen", bal.baits, bal.sold, bal.lost),
+          "−" .. money(bal.baitCost), 1, 1, 1, 1, 0.42, 0.42)
+        if bal.result then
+          GameTooltip:AddDoubleLine("Ergebnis", (bal.result >= 0 and "+" or "−") .. money(math.abs(bal.result)),
+            1, 0.82, 0, bal.result >= 0 and 0.37 or 1, bal.result >= 0 and 0.83 or 0.42, bal.result >= 0 and 0.55 or 0.42)
+        end
+        GameTooltip:AddLine("Verkaufte Köder erscheinen erst mit ihrer Post (bis zu 1 h später).", 0.6, 0.6, 0.62, true)
+      end
       GameTooltip:AddLine("Rechtsklick: Mindestgewinn und Tagesbudget", 0.6, 0.6, 0.62)
       GameTooltip:Show()
     end)
