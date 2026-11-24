@@ -126,6 +126,18 @@ function Detail.Days(d)
   return text
 end
 
+-- Axis labels: only the units that are not zero ("40s", "1g 20s"), the grid steps are round.
+local function axisMoney(c)
+  c = math.floor((c or 0) + 0.5)
+  if c == 0 then return "0" end
+  local g, sv, cu = math.floor(c / 10000), math.floor(c / 100) % 100, c % 100
+  local parts = {}
+  if g > 0 then parts[#parts + 1] = g .. "|cffffd100g|r" end
+  if sv > 0 then parts[#parts + 1] = sv .. "|cffc7c7cfs|r" end
+  if cu > 0 then parts[#parts + 1] = cu .. "|cffeda55fc|r" end
+  return table.concat(parts, " ")
+end
+
 local function count(n)
   n = math.floor((n or 0) + 0.5)
   return BreakUpLargeNumbers and BreakUpLargeNumbers(n) or tostring(n)
@@ -981,8 +993,7 @@ do
     ui.legend:SetPoint("TOPLEFT", page, "TOPLEFT", LEFT, -46)
     ui.legend:SetJustifyH("LEFT")
     ui.res = label(page, "GameFontDisableSmall")
-    ui.res:SetPoint("TOPRIGHT", page, "TOPRIGHT", -RIGHT, -46)
-    ui.res:SetJustifyH("RIGHT")
+    ui.res:SetJustifyH("LEFT") -- placed next to the quantity label once that exists (draw)
     -- the range switch, right in the head
     local right
     for k = #RANGES, 1, -1 do
@@ -1150,8 +1161,11 @@ do
     local q = C_Item and C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(id)
     local color = q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
     if color and color.hex then name = color.hex .. name .. "|r" end
-    ui.name:SetText(name .. "  " .. ns.Style.MUTED .. ns.AuctionHouse.Name() .. "|r")
-    local G, SEP = "|cffffd100", "      "
+    -- the data age goes into the title line: the stats line below is full
+    local stand = e.dataT and ("  ·  Stand " .. ago(e.dataT) .. " (" .. (SOURCES[e.dataSource] or "?") .. ")") or ""
+    ui.name:SetText(name .. "  " .. ns.Style.MUTED .. ns.AuctionHouse.Name() .. "|r"
+      .. "|cff999999" .. stand .. "|r")
+    local G, SEP = "|cffffd100", "    "
     local parts = { G .. "jetzt|r " .. (e.now and money(e.now) or (ns.Style.MUTED .. "nicht im AH|r"))
       .. ((e.now and e.quantity and e.quantity > 0) and (" · " .. count(e.quantity) .. " Stück") or "") }
     if #values > 0 then
@@ -1163,9 +1177,6 @@ do
     parts[#parts + 1] = G .. "Nachfrage|r " .. (ns.Item.DemandColored(e) or "–")
     local sat, _, satColor = ns.Item.SaturationText(e)
     parts[#parts + 1] = G .. "Sättigung|r " .. (sat and (satColor .. sat .. "|r") or "–")
-    if e.dataT then
-      parts[#parts + 1] = G .. "Stand|r " .. ago(e.dataT) .. " " .. ns.Style.MUTED .. "(" .. (SOURCES[e.dataSource] or "?") .. ")|r"
-    end
     ui.stats:SetText(table.concat(parts, SEP))
   end
 
@@ -1271,7 +1282,7 @@ do
       local fs = take("yLabel")
       fs:ClearAllPoints()
       fs:SetPoint("RIGHT", ui.plot, "BOTTOMLEFT", -6, yy)
-      fs:SetText(money(val))
+      fs:SetText(axisMoney(val))
     end
     -- quantity bars (own scale: the highest in the range fills the zone)
     for _, i in ipairs(v.vis) do
@@ -1301,6 +1312,9 @@ do
     ui.qty:ClearAllPoints()
     ui.qty:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 4, barZone + 1)
     ui.qty:SetText(qmax > 0 and ("Menge, max " .. count(qmax) .. " Stück") or "")
+    -- the resolution hint beside it, inside the plot (the head line is full)
+    ui.res:ClearAllPoints()
+    ui.res:SetPoint("LEFT", ui.qty, "RIGHT", 16, 0)
     -- price line: broken where no snapshot exists, a short dash for a lone slot; sold out as an
     -- orange tick on the base line, cut outliers with a cap on the edge
     local prev
