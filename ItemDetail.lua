@@ -1429,22 +1429,6 @@ do
     -- bait: lit for a moment when it is gone (sold, expired, or the market fell under it)
     local lies = plan and plan.baitLies or false
     if Fish.baitWas and Fish.baitWas.id == id and Fish.baitWas.lies and not lies then Fish.baitFlash = now + 3 end
-    -- a set bait that the search no longer shows as an own offer at its price has left the
-    -- auction house: taken (sold), or after 2 h expired - counted at once (an undercut bait is
-    -- still there: only its price counts, not whether it is in front)
-    if Fish.rows and Fish.rows.id == id then
-      local ownAt = {}
-      for _, r in ipairs(Fish.rows.list or {}) do
-        if (r.own or 0) > 0 then ownAt[r.unit] = true end
-      end
-      local log = Fish.DB().log
-      for _, e in ipairs(log) do
-        if e.k == "bait" and e.i == id and not e.gone then
-          if ownAt[e.p] then e.seen = true
-          elseif e.seen then e.gone = time() end
-        end
-      end
-    end
     Fish.baitWas = { id = id, lies = lies }
     local loc, have = Fish.BagSlot(id)
     local text = plan and plan.bait and ("Köder setzen (" .. money(plan.bait) .. ")") or "Köder setzen"
@@ -1530,6 +1514,28 @@ do
     if not (itemID and itemID == shownID and api and api.GetNumCommoditySearchResults) then return end
     Fish.rows = { id = itemID, list = readRows(itemID) }
     Fish.stale = nil
+    -- the first result after setting a bait ends "Köder wird eingestellt"
+    if Fish.baitSent and GetTime() - Fish.baitSent > 0.5 then Fish.baitSent = nil end
+    -- A set bait that a search no longer shows as an own offer at its price has left the
+    -- auction house: taken (sold), or after 2 h expired - counted at once (an undercut bait is
+    -- still there: only its price counts, not whether it is in front). One taken before any
+    -- search saw it counts after three searches without it.
+    local ownAt = {}
+    for _, r in ipairs(Fish.rows.list) do
+      if (r.own or 0) > 0 then ownAt[r.unit] = true end
+    end
+    for _, e in ipairs(Fish.DB().log) do
+      if e.k == "bait" and e.i == itemID and not e.gone then
+        if ownAt[e.p] then
+          e.seen = true
+        elseif e.seen then
+          e.gone = time()
+        elseif time() - e.t >= 2 then
+          e.misses = (e.misses or 0) + 1
+          if e.misses >= 3 then e.gone = time() end
+        end
+      end
+    end
     Fish.stat.results, Fish.stat.lastResults = Fish.stat.results + 1, GetTime()
     if not live() then return end
     local plan = Fish.Plan(itemID)
