@@ -1267,6 +1267,7 @@ do
     Fish.pending = nil
     if cancel and p and p.state ~= "buying" and C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
       pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+      Fish.cancelAt = GetTime()
     end
     if missed then
       Fish.missed = (Fish.missed or 0) + 1
@@ -1286,9 +1287,13 @@ do
   -- Asks the server what plan.n units cost now (StartCommoditiesPurchase: a quote, no buy - the
   -- buy is ConfirmCommoditiesPurchase on the player's click). auto: asked on a new catch without
   -- a click; if the game blocks that (ADDON_ACTION_BLOCKED below) the quote waits for a click.
+  -- Measured (fishTrace, 24 Nov): an ask sent right after a cancelled quote (15-100 ms) gets
+  -- AH error 10 (DatabaseError), one a bit later is answered - asks wait ASK_GAP after a cancel.
+  local ASK_GAP = 0.3
   function Fish.Ask(plan, auto)
     local api = C_AuctionHouse
     if Fish.pending or not (api and api.StartCommoditiesPurchase) then return end
+    if Fish.cancelAt and GetTime() - Fish.cancelAt < ASK_GAP then return end
     local p = { itemID = shownID, n = plan.n, sum = plan.sum, limit = plan.limit, bite = plan.baitLies,
       state = "asking", t = GetTime(), auto = auto, blind = plan.blind }
     Fish.pending = p
@@ -1346,12 +1351,6 @@ do
       local limit = (plan and plan.limit) or (Fish.lastLimit and Fish.lastLimit.id == shownID and Fish.lastLimit.limit)
       -- our own bait as the cheapest offer: a probe for 1 unit would be that unit (the game does
       -- not sell it, the buy fails) - the click asks for a fresh search at once instead
-      -- with an own offer of ours in the auction house the game refuses the ask ("DatabaseError":
-      -- it would have to offer our unit first) - the click asks for a fresh search instead
-      if not catch and Fish.OwnMin(shownID) then
-        if ns.AHSearch and ns.AHSearch.Request then ns.Safe(ns.AHSearch.Request, shownID, nil, true) end
-        limit = nil
-      end
       if limit then
         local left = Fish.Cfg(shownID).budget - Fish.DB().spent
         local n = catch and plan.n or 1
@@ -1678,13 +1677,12 @@ do
         -- game sells our own bait too: a probe at or above the price of a bait of ours still in
         -- the auction house would buy that bait back (a loss of the cut, and the next click sets
         -- the next bait) - only a price under every bait of ours counts.
-        local ownMin = Fish.OwnMin(p.itemID)
-        local unitAvg = total and p.n > 0 and total / p.n or nil
-        if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget
-            or (ownMin and unitAvg and unitAvg >= ownMin) then
+        -- (the game skips our own units in a quote - measured: bait at 1s67, quote for 1 unit 2s12)
+        if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
           Fish.stat.probes = (Fish.stat.probes or 0) + 1
           Fish.pending = nil
           if C_AuctionHouse.CancelCommoditiesPurchase then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
+          Fish.cancelAt = GetTime()
           ns.Safe(Fish.Refresh)
           return
         end
