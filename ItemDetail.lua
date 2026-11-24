@@ -1492,6 +1492,7 @@ do
     if on and ahOpen() and not Fish.modeWas then Fish.EnterMode() end
     Fish.modeWas = on and ahOpen()
     ui.bait:SetShown(false) -- one button does it all (Fish.Click)
+    if ui.fishReset then ui.fishReset:SetShown(on) end
     if ui.noBait then
       ui.noBait:SetShown(on)
       ui.noBait:SetText(Fish.noBait and "|cffff6b6bKöder: aus|r" or "Köder: an")
@@ -2081,6 +2082,15 @@ do
       ns.Safe(Fish.Refresh)
     end)
     ui.noBait:SetPoint("RIGHT", fb, "LEFT", -8, 0)
+    -- a fresh fishing session: today's baits and deals (the balance line) start at zero
+    ui.fishReset = button(page, "Neue Session", 110, function()
+      local db = Fish.DB()
+      db.log, db.spent = {}, 0
+      Fish.missed = 0
+      Fish.Dbg("neue Session – Köder und Deals auf 0")
+      ns.Safe(Fish.Refresh)
+    end)
+    ui.fishReset:SetPoint("RIGHT", ui.noBait, "LEFT", -8, 0)
     -- a bite blinks
     fb:SetScript("OnUpdate", function(self, elapsed)
       if not self.blink then return end
