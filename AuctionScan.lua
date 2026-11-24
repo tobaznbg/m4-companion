@@ -197,6 +197,8 @@ finish = function()
 
   local current, lastItems = {}, {}
   local soldTotal = 0
+  -- the scan as an observation for the cloud (Observations.lua), written in the same batches
+  local obsItems = scanState.obsID and ns.Obs and ns.Obs.Items(scanState.obsID)
   local index = 1
   local function step()
     local stop = math.min(#itemIDs, index + ITEM_BATCH - 1)
@@ -208,6 +210,7 @@ finish = function()
         summary = ns.AuctionStats.Summarize(listings)
         current[itemID] = { summary.min, summary.mv, summary.qty, summary.n, summary.sellers }
         lastItems[itemID] = toKeys(listings)
+        if obsItems then ns.Obs.Put(obsItems, itemID, now, listings, ns.Obs.SCAN) end
       end
       local soldUnits, soldValue, soldN, endedN
       if diff and previous.items[itemID] then
@@ -301,8 +304,10 @@ function Scan.Start()
   end
 
   local open = ns.AuctionHouse.Open()
+  -- obsID: the cloud house id the scan is recorded under as an observation - only at an
+  -- auctioneer, fixed now (the scan belongs to the house it was started at)
   state = { api = api, started = time(), listings = {}, count = 0, house = ns.AuctionHouse.Auto(),
-    npc = open and open.npc, npcName = open and open.name }
+    npc = open and open.npc, npcName = open and open.name, obsID = ns.Obs and ns.Obs.OpenHouseID() }
   db(state.house).lastScanT = time()
   ns.db.ah.lastScanT = time()
   if ns.Selling then C_Timer.After(1, function() ns.Safe(ns.Selling.Refresh) end) end

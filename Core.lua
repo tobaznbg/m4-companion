@@ -61,18 +61,25 @@ end
 
 -- The companion app keeps a data addon (m4-companion_Data, global M4CompanionData) with the
 -- hourly cloud export. Its auction data replaces the copy shipped with this addon when it
--- is newer, so every reader of ns.AHData gets the fresh one.
-local function adoptLiveData()
-  local live = rawget(_G, "M4CompanionData")
-  if type(live) ~= "table" or type(live.AHData) ~= "table" then return end
-  ns.AHData = ns.AHData or {}
-  for house, data in pairs(live.AHData) do
-    local own = ns.AHData[house]
-    if type(data) == "table" and data.items
+-- is newer, so every reader of ns.AHData gets the fresh one. The same for the players'
+-- observations since the snapshot (Data_Obs<house>.lua -> AHObs, read by Item.Get).
+local function adopt(name, live)
+  if type(live[name]) ~= "table" then return end
+  ns[name] = ns[name] or {}
+  for house, data in pairs(live[name]) do
+    local own = ns[name][house]
+    if type(data) == "table" and type(data.items) == "table"
         and (not own or tostring(data.updated or "") > tostring(own.updated or "")) then
-      ns.AHData[house] = data
+      ns[name][house] = data
     end
   end
+end
+
+local function adoptLiveData()
+  local live = rawget(_G, "M4CompanionData")
+  if type(live) ~= "table" then return end
+  adopt("AHData", live)
+  adopt("AHObs", live)
 end
 ns.AdoptLiveData = adoptLiveData
 

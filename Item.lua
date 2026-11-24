@@ -4,9 +4,15 @@
 -- ns.Item(itemID) -> {
 --   now        "AH jetzt" in every view: the price it can be bought for right now, i.e. the
 --              cheapest offer (copper per unit), nil if not on offer; from the newest of
---              collector snapshot, own full scan and single item search
+--              collector snapshot, own full scan, own searches and other players'
+--              observations (ns.AHObs, Data_Obs<house>.lua)
 --   offers, quantity   auctions / units listed at that time
---   dataT      time() of the source "now" comes from (collector snapshot, own scan or search)
+--   dataT      time() of the source "now" comes from
+--   dataSource "cloud" (snapshot), "scan" (own full scan), "search" (own search) or "players"
+--              (other players' observations via the cloud): where now / offers / quantity are from
+--   levels     the cheapest unit prices of that source as "price:units;..." (at most 8, see
+--              Item.PriceLevels), nil when the source has none (snapshot; scans and searches
+--              not recorded as observations, e.g. of a house without cloud id)
 --   medToday, medTodayHours  median of the hourly cheapest offers today (Berlin calendar
 --                      day, 0:00-23:59 German time) so far, and the hours behind it (internal,
 --                      not shown)
@@ -54,10 +60,27 @@ local VENDOR_ESTIMATE = {
 local Item = {}
 local observed = {}   -- itemID -> { now, t } from single item searches (this session)
 
--- The cloud data of the current auction house (ns.AuctionHouse.CloudData), nil without.
+-- The cloud data of the current auction house (ns.AuctionHouse.CloudData), nil without; and
+-- the cloud house id.
 local function collector(itemID)
-  local house = ns.AuctionHouse.CloudData()
-  return house and house.items[itemID], house
+  local house, id = ns.AuctionHouse.CloudData()
+  return house and house.items[itemID], house, id
+end
+
+-- Observations of the item in the current house (cloud id): the own ones (ns.db.obs, recorded by
+-- Observations.lua from full scans and searches, kept across sessions) and the other players'
+-- (ns.AHObs from the data addon: { t, m, q, n, confirmations, d }, only those newer than the
+-- house's snapshot).
+local function ownObs(id, itemID)
+  local h = id and ns.db and ns.db.obs and ns.db.obs[id]
+  local o = h and h[itemID]
+  return type(o) == "table" and type(o.t) == "number" and o or nil
+end
+
+local function playersObs(id, itemID)
+  local h = id and ns.AHObs and ns.AHObs[id]
+  local r = type(h) == "table" and type(h.items) == "table" and h.items[itemID]
+  return type(r) == "table" and type(r[1]) == "number" and type(r[2]) == "number" and r or nil
 end
 
 -- UTC "2026-11-17T09:18:56Z" -> epoch seconds (cached).
@@ -104,27 +127,41 @@ local function clientVendorSell(itemID)
 end
 
 function Item.Get(itemID)
-  local row, house = collector(itemID)
+  local row, house, id = collector(itemID)
   local e = { itemID = itemID }
-  -- now: the newest source wins.
+  -- now / offers / quantity / levels: the newest source wins (on a tie the earlier one here, so
+  -- an own observation with price levels beats the same scan's summary).
   local bestT = -1
   if row then
     bestT = epoch(house.updated) or 0
-    e.now, e.offers, e.quantity = row[1], row[7], row[8]
+    e.now, e.offers, e.quantity, e.dataSource = row[1], row[7], row[8], "cloud"
+  end
+  local own = ownObs(id, itemID)
+  if own and own.t > bestT then
+    e.now, e.quantity, e.offers, e.levels = own.m, own.q, own.n, own.d
+    e.dataSource = own.s == 1 and "scan" or "search"
+    bestT = own.t
   end
   local ah = ns.AuctionHouse.Peek() -- the own scan of the current auction house
   if ah and ah.currentT and ah.currentT > bestT then
     local live = ah.current and ah.current[itemID]
     -- own scan row: { min, marketValue, quantity, offers, sellers }
     e.now = live and live[1] and live[1] > 0 and live[1] or nil
-    e.quantity, e.offers = live and live[3] or 0, live and live[4] or 0
+    e.quantity, e.offers, e.levels, e.dataSource = live and live[3] or 0, live and live[4] or 0, nil, "scan"
     bestT = ah.currentT
   end
   local o = observed[itemID]
-  -- single searches belong to the automatic house: not while another house is viewed
+  -- single searches belong to the automatic house: not while another house is viewed. They
+  -- also know "nothing on offer", which the observations cannot hold.
   if o and o.t > bestT and ns.AuctionHouse.Current() == ns.AuctionHouse.Auto() then
-    e.now = o.now
+    e.now, e.levels, e.dataSource = o.now, nil, "search"
+    if not o.now then e.quantity, e.offers = 0, 0 end
     bestT = o.t
+  end
+  local p = playersObs(id, itemID)
+  if p and p[1] > bestT then
+    e.now, e.quantity, e.offers, e.levels, e.dataSource = p[2], p[3], p[4], p[6], "players"
+    bestT = p[1]
   end
   e.dataT = bestT > 0 and bestT or nil
   if row then
@@ -241,6 +278,16 @@ function Item.History(itemID, hourly)
   local live = historyTable(id)
   return historyFrom(live, itemID, hourly)
     or (id == ns.AuctionHouse.PRIMARY_CLOUD and live ~= ns.History and historyFrom(ns.History, itemID, hourly)) or nil
+end
+
+-- Price levels "460:120;465:80" (Item.Get's levels) -> { { unit, count }... } cheapest first;
+-- empty for nil or "".
+function Item.PriceLevels(text)
+  local list = {}
+  for unit, count in tostring(text or ""):gmatch("(%d+):(%d+)") do
+    list[#list + 1] = { unit = tonumber(unit), count = tonumber(count) }
+  end
+  return list
 end
 
 -- Items in the own full scan (itemID -> true).

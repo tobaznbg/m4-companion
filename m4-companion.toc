@@ -10,6 +10,7 @@ Core.lua
 AuctionHouse.lua
 Style.lua
 Item.lua
+Observations.lua
 Status.lua
 Tracker.lua
 Data_Leatherworking.lua

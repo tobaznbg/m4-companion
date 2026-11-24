@@ -4,10 +4,11 @@
 -- The pool comes from the cloud (collector ahrhythm.py, hourly with the house data):
 --   ns.AHData[house].rhythm = { [itemID] = { buyHour, sellHour, buyLimit, ask, maxQty, profitDay } }
 -- windows are 3 hours from buyHour / sellHour (Berlin time = the PC's clock), buyLimit and ask in
--- copper per unit. The cloud only sets these parameters; what is on offer right now comes from
--- the newest own observation and updates at once:
---   * a commodity search at the auction house (every result row: units at or under the limit),
---   * the own full scan (its listings of the item),
+-- copper per unit. The cloud only sets these parameters; what is on offer right now is the
+-- newest observation Item.Get knows, updated at once on an own search or scan:
+--   * own search or full scan (Observations.lua), other players' observations (cloud): the 8
+--     cheapest price levels - units at or under the limit counted from them, a lower bound ("≥")
+--     when all 8 are at or under it; the own full scan of that time counts its every listing,
 --   * else the cloud snapshot (cheapest only).
 -- The addon never buys or posts by itself; it only tells what the windows say now.
 local ADDON, ns = ...
@@ -21,7 +22,7 @@ local DEPOSIT_2H = 0.05
 local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100"
 
 local window, split, selected
-local live = {} -- itemID -> { units = at or under the limit, cheapest, t } of a commodity search
+local SOURCES = { cloud = "Cloud", scan = "Vollscan", search = "Suche", players = "Spieler" }
 
 local function money(c) return c and ns.FormatMoney(math.floor(c + 0.5), true) or "–" end
 
@@ -38,32 +39,32 @@ end
 -- Hours until the window starting at from opens (0 = open now).
 local function hoursUntil(h, from) return inWindow(h, from) and 0 or (from - h) % 24 end
 
--- What is on offer now: cheapest per unit, units at or under the limit (nil = unknown), source, time.
+-- What is on offer now: cheapest per unit, units at or under the limit (nil = unknown; atLeast:
+-- a lower bound), source, time - all from the one newest source of Item.Get.
 local function offer(itemID, limit)
-  local best = { t = -1 }
-  local e = ns.Item and ns.Item.Get and ns.Item.Get(itemID)
-  if e and e.dataT then best = { cheapest = e.now, t = e.dataT, source = "Cloud" } end
-  local ah = ns.AuctionHouse.Peek()
-  local keys = ah and ah.last and ah.last.items and ah.last.items[itemID]
-  if ah and ah.currentT and ah.currentT >= best.t and ns.AuctionHouse.Current() == ns.AuctionHouse.Auto() then
-    local units, cheapest = 0, nil
-    for _, key in ipairs(keys or {}) do
-      local l = ns.AuctionStats.ParseKey(key)
-      if l then
-        if l.unit <= limit then units = units + l.count end
-        if not cheapest or l.unit < cheapest then cheapest = l.unit end
-      end
+  local e = ns.Item.Get(itemID)
+  if not (e and e.dataT) then return {} end
+  local o = { cheapest = e.now, t = e.dataT, source = SOURCES[e.dataSource] or "Cloud" }
+  local levels, capped
+  if e.dataSource == "scan" then
+    -- the own full scan of that very time has every listing: an exact count
+    local list, t = ns.Item.Listings(itemID)
+    if t == e.dataT then levels = list or {} end
+  end
+  if not levels and e.levels then
+    levels = ns.Item.PriceLevels(e.levels)
+    capped = #levels >= (ns.Obs and ns.Obs.LEVELS or 8)
+  end
+  if not levels and not e.now and e.dataSource ~= "cloud" then levels = {} end -- seen: nothing on offer
+  if levels then
+    local units, all = 0, true
+    for _, l in ipairs(levels) do
+      if l.unit <= limit then units = units + l.count else all = false end
     end
-    best = { cheapest = cheapest, units = units, t = ah.currentT, source = "Vollscan" }
+    -- only the cheapest levels are known: with all of them under the limit more may follow
+    o.units, o.atLeast = units, capped and all or nil
   end
-  local s = live[itemID]
-  if s and s.t >= best.t and ns.AuctionHouse.Current() == ns.AuctionHouse.Auto() then
-    best = { cheapest = s.cheapest, units = s.units, t = s.t, source = "Suche" }
-  end
-  if best.t < 0 then return {} end
-  -- the cheapest of a later single search can be newer than the full scan's listings
-  if e and e.dataT and e.dataT > best.t then best.cheapest = e.now end
-  return best
+  return o
 end
 
 local function ago(t)
@@ -175,7 +176,7 @@ local function show(entry, c)
     tostring(s.maxQty),
     money(s.profitDay),
     o.cheapest and (money(o.cheapest) .. MUTED .. "  " .. o.source .. ", " .. ago(o.t) .. "|r") or "–",
-    o.units and tostring(o.units) or (MUTED .. "unbekannt|r"),
+    o.units and ((o.atLeast and "≥ " or "") .. o.units) or (MUTED .. "unbekannt|r"),
     tostring(s.held),
   }
   for i, text in ipairs(values) do v.fig.values[i]:SetText(text) end
@@ -202,7 +203,8 @@ local function show(entry, c)
   end
   v.Advice:SetText(advice)
   v.Note:SetText("Fenster und Preise aus der Cloud (stündlich). Günstigster und Stückzahl aus der neuesten "
-    .. "eigenen Suche bzw. dem Vollscan. Gebühr 5 %, Einstellgebühr 2 h " .. money(s.dep) .. " je Stück.")
+    .. "Beobachtung: eigene Suche, eigener Vollscan, andere Spieler oder Cloud-Stand. "
+    .. "Gebühr 5 %, Einstellgebühr 2 h " .. money(s.dep) .. " je Stück.")
 end
 
 -- List -------------------------------------------------------------------------------------
@@ -278,23 +280,15 @@ function Trade.Toggle()
   if window and window.frame:IsShown() then window.frame:Hide() else Trade.Show() end
 end
 
--- Live: every commodity search of a pool item counts the units at or under its limit.
-ns.On("COMMODITY_SEARCH_RESULTS_UPDATED", function(_, itemID)
-  local pool = Trade.Pool()
-  local r = itemID and pool and pool[itemID]
-  if not r or not C_AuctionHouse.GetNumCommoditySearchResults then return end
-  local units, cheapest = 0, nil
-  for i = 1, C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0 do
-    local res = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
-    if res and res.unitPrice and res.quantity then
-      if not res.containsOwnerItem and res.unitPrice <= r[3] then units = units + res.quantity end
-      if not cheapest or res.unitPrice < cheapest then cheapest = res.unitPrice end
-    end
-  end
-  live[itemID] = { units = units, cheapest = cheapest, t = time() }
-  refresh()
-end)
-ns.AuctionHouse.OnChange(function() live = {}; refresh() end)
+-- Live: a search of a pool item redraws at once (Item.Get has it as the newest source). One
+-- frame later: the "nothing on offer" of an empty search reaches Item.Observe in another handler.
+if ns.Obs then
+  ns.Obs.OnRecord(function(itemID)
+    local pool = Trade.Pool()
+    if pool and pool[itemID] then C_Timer.After(0, Trade.Refresh) end
+  end)
+end
+ns.AuctionHouse.OnChange(function() refresh() end)
 ns.OnReady(function()
   if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(refresh) end
 end)
