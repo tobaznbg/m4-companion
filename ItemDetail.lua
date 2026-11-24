@@ -766,7 +766,7 @@ end
 do
   local NAME = "M4CompanionPriceChart"
   local W, H = 900, 520
-  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 64, 34 -- plot margins in the page
+  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 80, 34 -- plot margins in the page
   local RANGES = {
     { key = "today", today = true, button = "Heute", label = "heute" },
     { key = "2d", span = 2 * 86400, button = "2 Tage", label = "2 Tage" },
@@ -1007,7 +1007,12 @@ do
     ui.stats:SetPoint("RIGHT", page, "RIGHT", -6, 0)
     ui.stats:SetJustifyH("LEFT")
     ui.legend = label(page, "GameFontHighlightSmall")
-    ui.legend:SetPoint("TOPLEFT", page, "TOPLEFT", LEFT, -46)
+    ui.legend:SetPoint("TOPLEFT", page, "TOPLEFT", LEFT, -62)
+    -- the live figures of the last hour, under the stats
+    ui.live = label(page, "GameFontHighlightSmall")
+    ui.live:SetPoint("TOPLEFT", ui.stats, "BOTTOMLEFT", 0, -4)
+    ui.live:SetPoint("RIGHT", page, "RIGHT", -6, 0)
+    ui.live:SetJustifyH("LEFT")
     ui.legend:SetJustifyH("LEFT")
     ui.res = label(page, "GameFontDisableSmall")
     ui.res:SetJustifyH("LEFT") -- placed next to the quantity label once that exists (draw)
@@ -1166,6 +1171,41 @@ do
   end
 
   -- The head: name, the range's figures, how old "jetzt" is and where it is from.
+  -- Live figures from the fine points of the last hour (own searches, live channel): supply now
+  -- and its change per hour, units gone (bought or taken back) and new, the price's change.
+  local LIVE_WINDOW = 3600
+  local function liveText(id)
+    local G, M = "|cffffd100", ns.Style.MUTED
+    local cut, pts = time() - LIVE_WINDOW, {}
+    for _, pt in ipairs(tailOf(id)) do
+      if pt.t >= cut and pt.q then pts[#pts + 1] = pt end
+    end
+    if #pts < 2 or pts[#pts].t - pts[1].t < 300 then
+      return G .. "Live 60 min|r  " .. M .. "zu wenig Live-Daten – AH öffnen, das Fenster sucht dann jede Sekunde|r"
+    end
+    local first, last = pts[1], pts[#pts]
+    local gone, new = 0, 0
+    for k = 2, #pts do
+      local d = pts[k].q - pts[k - 1].q
+      if d < 0 then gone = gone - d else new = new + d end
+    end
+    local hours = (last.t - first.t) / 3600
+    local rate = (last.q - first.q) / hours
+    local share = last.q > 0 and rate / last.q or 0
+    local trend = share <= -0.05 and "|cff5fd38dschwindet|r" or share >= 0.05 and "|cffff6b6bwächst|r" or (M .. "stabil|r")
+    local parts = { string.format("%sAngebot|r %s Stück  %s%s/h %s", G, count(last.q), rate >= 0 and "+" or "−",
+      count(math.floor(math.abs(rate) + 0.5)), trend) }
+    parts[#parts + 1] = G .. "weg|r " .. count(gone)
+    parts[#parts + 1] = G .. "neu|r " .. count(new)
+    if first.p > 0 and last.p > 0 then
+      local d = last.p / first.p - 1
+      parts[#parts + 1] = string.format("%sPreis|r %s%+d %%|r", G, d > 0.005 and "|cff5fd38d" or d < -0.005 and "|cffff6b6b" or M,
+        math.floor(d * 100 + (d >= 0 and 0.5 or -0.5)))
+    end
+    return string.format("%sLive %d min|r  ", G, math.max(5, math.floor((last.t - first.t) / 60 + 0.5)))
+      .. table.concat(parts, M .. "  ·  |r")
+  end
+
   local function drawHead(id, e, values, rng)
     local getIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
     local icon = getIcon and getIcon(id) or nil
@@ -1243,6 +1283,7 @@ do
       end
     end
     drawHead(id, e, values, rng)
+    ui.live:SetText(liveText(id))
     -- legend and resolution
     local r = v.rhythm
     local legend = "|cffffd100günstigstes Angebot|r   |cffb0b0b0Menge (Balken)|r   |cffffffffR = Marktwert|r"
