@@ -774,7 +774,8 @@ end
 --     whole market into a catch).
 --   F (catch limit) = floor((M × (1 − cut) − deposit) / (1 + minGain)), deposit = vendorSell ×
 --     5 % (2 h): what is bought at F and sold again at M leaves minGain after cut and deposit.
---   K (bait) = F − 1: undercutters then post at F or under, right in the catch.
+--   K (bait) = 1c under the cheapest foreign offer, at most F − 1: undercutters orient on the
+--     cheapest offer - a bait behind cheaper single units (other baits) is never seen.
 --   N: foreign units at or under F, cheapest first, as many as the rest of the day's budget pays.
 -- Returns { market, dep, limit = F, bait = K, baitLies, catch (foreign units <= F), n, sum, top
 -- (dearest unit price taken), left (budget left) }; market / limit nil when there is none.
@@ -797,7 +798,11 @@ function Detail.FishPlan(rows, vendorSell, minGain, budget, spent)
   -- the epsilon keeps a whole result whole (0.95 is not exact in binary)
   local limit = math.floor((p.market * (1 - FISH_CUT) - p.dep) / (1 + (minGain or 0)) + 1e-6)
   if limit < 2 then return p end
-  p.limit, p.bait = limit, limit - 1
+  local cheapest
+  for _, r in ipairs(list) do
+    if foreign(r) > 0 then cheapest = r.unit break end
+  end
+  p.limit, p.bait = limit, math.max(1, math.min(limit - 1, cheapest and cheapest - 1 or limit - 1))
   local left, full = p.left, true
   for _, r in ipairs(list) do
     if r.unit > limit then break end
