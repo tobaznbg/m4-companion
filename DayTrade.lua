@@ -80,12 +80,13 @@ end
 
 -- Buying one item with the capital: along its known price levels up to the buy limit and the
 -- daily maximum. Without levels (cloud snapshot only) every unit is priced at the cheapest one
--- (approx = true). Returns units, cost, expected profit after cut and deposit at the ask.
+-- (approx = true). Returns units, cost, expected profit after cut and deposit at the ask, and the
+-- dearest unit price bought.
 function Trade.Plan(s, capital)
   capital = capital or CAPITAL
   local o = s.offer
   local net = s.ask * (1 - CUT) - s.dep
-  local qty, cost = 0, 0
+  local qty, cost, top = 0, 0, nil
   if o.levels and #o.levels > 0 then
     local levels = {}
     for i, l in ipairs(o.levels) do levels[i] = l end
@@ -94,15 +95,15 @@ function Trade.Plan(s, capital)
       if l.unit > s.limit then break end
       local take = math.min(l.count, s.maxQty - qty, math.floor((capital - cost) / l.unit))
       if take <= 0 then break end
-      qty, cost = qty + take, cost + take * l.unit
+      qty, cost, top = qty + take, cost + take * l.unit, l.unit
     end
-    return qty, cost, qty * net - cost, false
+    return qty, cost, qty * net - cost, false, top
   end
   if not o.cheapest or o.cheapest > s.limit then return 0, 0, 0, false end
   -- no levels: no more than usually is on offer under the limit in the buy window
   qty = math.min(s.maxQty, s.avail or s.maxQty, math.floor(capital / o.cheapest))
   cost = qty * o.cheapest
-  return qty, cost, qty * net - cost, true
+  return qty, cost, qty * net - cost, true, o.cheapest
 end
 
 -- The state of one pool item now: { phase = "buy"|"sell"|"wait", text, color, … }.
@@ -178,7 +179,7 @@ Trade.CUT, Trade.Ago, Trade.CAPITAL = CUT, ago, CAPITAL
 -- Card -------------------------------------------------------------------------------------
 
 local LABELS = { "Kaufzeit", "Kaufgrenze", "Einstellzeit", "Zielpreis (2 h)", "Untergrenze", "Höchstens / Tag",
-  "Üblich ≤ Grenze", "Erwartet / Tag", "Günstigster jetzt", "Stück ≤ Grenze", "Im Haushalt" }
+  "Üblich ≤ Grenze", "Erwartet / Tag", "Günstigster jetzt", "Angebot ≤ Grenze", "Im Haushalt" }
 
 local function card(c)
   local NW = ns.NativeWindow
@@ -242,8 +243,10 @@ local function show(entry, c)
   local advice
   if s.phase == "buy" then
     if o.cheapest and o.cheapest <= s.limit then
-      advice = GREEN .. string.format("Jetzt kaufen: bis %s je Stück, höchstens %d Stück.|r", money(s.limit), s.maxQty)
-        .. MUTED .. string.format("\nEinstellen %s zu %s.|r", windowText(s.sellHour), money(s.ask))
+      -- the own amount: what the capital buys (cheapest first, up to the limit and the day's maximum)
+      local qty, cost, profit, _, top = Trade.Plan(s)
+      advice = GREEN .. string.format("Jetzt kaufen: %d Stück für %s (bis %s je Stück).|r", qty, money(cost), money(top or s.limit))
+        .. MUTED .. string.format("\nEinstellen %s zu %s: %s+%s|r", windowText(s.sellHour), money(s.ask), GREEN, money(profit))
     elseif o.cheapest then
       advice = RED .. "Gerade zu teuer – nichts über der Kaufgrenze kaufen.|r"
     else
