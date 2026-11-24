@@ -577,7 +577,9 @@ function ns.MinMargin()
   local v = ns.db and ns.db.ui and ns.db.ui.productsMargin
   return (tonumber(v) or 30) / 100
 end
-function ns.Coins(profit, cost, demand)
+--   Saturation (Item.SaturationText): übersättigt one coin less (at least one stays: there
+--   is profit), unterversorgt one more (at most three).
+function ns.Coins(profit, cost, demand, saturation)
   if not profit or profit <= 0 then return 0, false end
   local margin = (cost and cost > 0) and profit / cost or 10
   if margin < ns.MinMargin() then return 0, false end
@@ -588,6 +590,9 @@ function ns.Coins(profit, cost, demand)
     if level == "mittel" and k < COIN_THREE_MID then n = math.min(n, 2)
     elseif level == "niedrig" or level == "kaum" then n = math.min(n, 2) end
   end
+  local sat = saturation and ns.Item.SaturationText({ saturation = saturation })
+  if sat == "übersättigt" then n = math.max(1, n - 1)
+  elseif sat == "unterversorgt" then n = math.min(3, n + 1) end
   if profit < COIN_MIN_PROFIT then n = 1 end
   local grey = demand ~= nil and demand < ((ns.Item.DEMAND_LEVELS[#ns.Item.DEMAND_LEVELS] or {})[1] or 1)
   return n, grey
@@ -865,8 +870,8 @@ local function productEntries(pid)
   local function entry(e)
     return { key = tostring(e.spell or e.itemID), name = e.recipe, icon = itemIcon(e.itemID), itemID = e.itemID,
       -- demand as the item has it (nil without data, not 0)
-      coins = e.onAH and (ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)) or 0,
-      coinsGrey = e.onAH and select(2, ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)) or false, locked = not e.learned,
+      coins = e.onAH and (ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand, ns.Item(e.itemID).saturation)) or 0,
+      coinsGrey = e.onAH and select(2, ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand, ns.Item(e.itemID).saturation)) or false, locked = not e.learned,
       -- not learned: the name greyed, like a recipe out of reach
       color = not e.learned and { 0.55, 0.55, 0.55 } or nil, e = e,
       -- the profit per craft right in the row (the name is cut before it)
@@ -1635,7 +1640,7 @@ local function overviewLines(p)
   local best, grey = 0, false
   for _, e in ipairs(rows("all", p.pid, knower) or {}) do
     if e.onAH and e.profit then
-      local n, g = ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)
+      local n, g = ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand, ns.Item(e.itemID).saturation)
       if n > best or (n == best and grey and not g) then best, grey = n, g end
     end
   end
@@ -1673,7 +1678,7 @@ local function overviewSlot(parent, p)
     for _, e in ipairs(rows("all", p.pid, (knowerOf(p.pid))) or {}) do
       if e.onAH and (e.profit or 0) > 0 then
         count = count + 1
-        local n = ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand)
+        local n = ns.Coins(e.profit, e.cost, ns.Item(e.itemID).demand, ns.Item(e.itemID).saturation)
         if n > bestN or (n == bestN and best and e.profit > best.profit) then best, bestN = e, n end
       end
     end
@@ -1993,7 +1998,7 @@ local function updateList(list)
     local e = ns.RecipeEconomics(id)
     if not row.m4Coins then row.m4Coins = ns.NativeWindow.Coins(row, label) end
     local coins, grey = 0, false
-    if e and e.profit and e.onAH then coins, grey = ns.Coins(e.profit, e.cost, ns.Item(e.out).demand) end
+    if e and e.profit and e.onAH then coins, grey = ns.Coins(e.profit, e.cost, ns.Item(e.out).demand, ns.Item(e.out).saturation) end
     -- left of the skill-up arrow when it shows, else where it sits
     local ups = rawget(row, "SkillUps")
     row.m4Coins.Set(coins, type(ups) == "table" and ups.IsShown and ups:IsShown() and ups or nil, grey and "grey" or nil)
