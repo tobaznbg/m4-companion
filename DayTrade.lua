@@ -39,6 +39,14 @@ local function inWindow(h, from) return (h - from) % 24 < WINDOW_HOURS end
 local function windowText(from)
   return string.format("%d–%d Uhr", from, (from + WINDOW_HOURS) % 24)
 end
+-- "heute 19–22 Uhr" / "morgen 11–14 Uhr": the next sell window after now (one open now is
+-- today's, but posting into it would be undercut by the cheap offers: the next one is tomorrow's).
+local function nextWindowText(from)
+  local h = tonumber(date("%H"))
+  local tomorrow = inWindow(h, from) or h + (from - h) % 24 >= 24
+  return (tomorrow and "morgen " or "heute ") .. windowText(from)
+end
+
 -- Hours until the window starting at from opens (0 = open now).
 local function hoursUntil(h, from) return inWindow(h, from) and 0 or (from - h) % 24 end
 
@@ -179,7 +187,7 @@ function Trade.States()
   end
   return out
 end
-Trade.CUT, Trade.Ago, Trade.CAPITAL = CUT, ago, CAPITAL
+Trade.CUT, Trade.Ago, Trade.CAPITAL, Trade.NextWindowText = CUT, ago, CAPITAL, nextWindowText
 
 -- Card -------------------------------------------------------------------------------------
 
@@ -227,11 +235,13 @@ local function cardRows(s)
     return {
       { "Kaufen", string.format("%d Stück", qty) },
       { "Einkauf", string.format("%s  %s(bis %s je Stück)|r", money(cost), MUTED, money(top or s.limit)) },
-      { "Verkaufen", string.format("%s zu %s", windowText(s.sellHour), money(s.ask)) },
+      { "Verkaufen", string.format("%s zu %s", nextWindowText(s.sellHour), money(s.ask)) },
       { "Gewinn", GREEN .. "+" .. money(profit) .. "|r" },
       { "Günstigster", now },
       { "Im Haushalt", tostring(s.held) },
-    }, GREEN .. string.format("Jetzt %d Stück kaufen, %s einstellen.|r", qty, windowText(s.sellHour))
+    }, GREEN .. string.format("Jetzt %d Stück kaufen, %s einstellen.|r", qty, nextWindowText(s.sellHour))
+      .. (inWindow(tonumber(date("%H")), s.sellHour)
+        and (GOLD .. "\nGerade Verkaufszeit, aber billig – der Rhythmus hält heute nicht.|r") or "")
   elseif s.phase == "buy" then
     return {
       { "Kaufzeit", windowText(s.buyHour) },

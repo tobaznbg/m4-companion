@@ -120,7 +120,7 @@ local function refresh()
       add({ itemID = b.s.itemID, text = ns.ItemName(b.s.itemID) or ("Item " .. b.s.itemID),
         right = string.format("%s+%s|r", GREEN, money(b.profit)),
         tip = string.format("Kaufen: %d Stück für %s (Grenze %s je Stück).\nEinstellen %s zu %s je Stück: erwartet +%s nach Gebühr und Einstellgebühr.",
-          b.qty, money(b.cost), money(b.s.limit), string.format("%d–%d Uhr", b.s.sellHour, (b.s.sellHour + 3) % 24),
+          b.qty, money(b.cost), money(b.s.limit), ns.DayTrade.NextWindowText(b.s.sellHour),
           money(b.s.ask), money(b.profit)) })
     end
     -- post now: what the household holds in its sell window
