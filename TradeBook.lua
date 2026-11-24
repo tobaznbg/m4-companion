@@ -1059,17 +1059,21 @@ local function collectStock()
     local gain = sell and (sell - cost) or nil
     local name = s.name or ns.ItemName(s.itemId) or ("#" .. s.itemId)
     g.items[#g.items + 1] = { key = g.key .. ":" .. s.itemId, itemID = s.itemId, icon = iconOf(s.itemId), name = name,
-      sub = sub, gain = gain or -1e12,
-      cols = { name, tostring(n), gain and signed(gain) or "–" },
+      sub = sub, gain = sell or cost, -- (sorts by worth)
+      -- the list shows what the units are worth (at the auction house after the cut; without a
+      -- price their cost, grey)
+      cols = { name, tostring(n), sell and money(sell) or (MUTED .. money(cost) .. "|r") },
       values = { tostring(n), money(s.unitCost), money(cost), sell and money(sell / n) or "–",
         sell and money(sell) or "–", pctText(gain, cost), gain and signed(gain) or "–" } }
     g.units, g.cost = g.units + n, g.cost + cost
+    g.worth = (g.worth or 0) + (sell or cost)
     if sell then g.sell, g.gain = g.sell + sell, g.gain + gain end
     -- sold (AH Transit) is gold on its way, not goods: counted apart in the balance
     if g.key == "transit" then
       total.transit = (total.transit or 0) + (sell or 0)
     else
       total.units, total.cost = total.units + n, total.cost + cost
+      total.worth = (total.worth or 0) + (sell or cost)
       if sell then total.sell, total.gain = total.sell + sell, total.gain + gain end
     end
   end
@@ -1112,12 +1116,12 @@ local function collectStock()
   table.sort(order, function(a, b)
     local ra, rb = RANK[a.key] or 9, RANK[b.key] or 9
     if ra ~= rb then return ra < rb end
-    return a.gain > b.gain
+    return (a.worth or 0) > (b.worth or 0)
   end)
   for _, g in ipairs(order) do
     table.sort(g.items, function(a, b) return a.gain > b.gain end)
-    -- AH Transit: the whole gold that comes with the mail, else the book gain
-    g.value = g.key == "transit" and money(g.sell) or signed(g.gain)
+    -- what the group is worth (AH Transit: the gold that comes with the mail)
+    g.value = money(g.worth or 0)
     g.values = { string.format("%d Items · %d Stück", #g.items, g.units), money(g.cost), money(g.sell),
       pctText(g.gain, g.cost), signed(g.gain) }
   end
@@ -1125,7 +1129,8 @@ local function collectStock()
   if gold then table.insert(order, 1, gold) end
   local cash = gold and gold.total or 0
   local transit = total.transit or 0
-  return { groups = order, balance = { money(cash), money(transit), money(total.cost), money(cash + transit + total.cost),
+  local worth = total.worth or 0
+  return { groups = order, balance = { money(cash), money(transit), money(worth), money(cash + transit + worth),
     signed(total.gain) } }
 end
 
@@ -1134,8 +1139,8 @@ local function buildStock(page)
     title = "Herkunft",
     groupLabels = { "Bestand", "Einkauf", "Erlös (nach Gebühr)", "Marge", "Buchgewinn" },
     itemLabels = { "Stück", "Einkauf / Stk.", "Einkauf", "Erlös / Stk.", "Erlös", "Marge", "Buchgewinn" },
-    listCols = { { "Item", 20, "LEFT", 190 }, { "Stück", 245, "RIGHT" }, { "Buchgewinn", 315, "RIGHT" } },
-    balanceLabels = { "Gold", "AH Transit", "Ware (Einkauf)", "Zusammen", "Buchgewinn Ware" },
+    listCols = { { "Item", 20, "LEFT", 190 }, { "Stück", 245, "RIGHT" }, { "Wert", 315, "RIGHT" } },
+    balanceLabels = { "Gold", "AH Transit", "Ware (AH-Wert)", "Zusammen", "Buchgewinn Ware" },
     collect = collectStock,
   })
 end
