@@ -593,6 +593,9 @@ function ns.Coins(profit, cost, demand, saturation)
   local sat = saturation and ns.Item.SaturationText({ saturation = saturation })
   if sat == "übersättigt" then n = math.max(1, n - 1)
   elseif sat == "unterversorgt" then n = math.min(3, n + 1) end
+  -- the third coin only for an undersupplied market (also not without a saturation figure):
+  -- only there does a further offer sell besides the cheapest
+  if sat ~= "unterversorgt" then n = math.min(n, 2) end
   if profit < COIN_MIN_PROFIT then n = 1 end
   local grey = demand ~= nil and demand < ((ns.Item.DEMAND_LEVELS[#ns.Item.DEMAND_LEVELS] or {})[1] or 1)
   return n, grey
