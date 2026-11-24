@@ -96,9 +96,47 @@ local function recordSearch(itemID, offers, source)
   for _, fn in ipairs(listeners) do ns.Safe(fn, itemID, source, recorded) end
 end
 
+-- Trace ("/m4 spur <item>"): for a traced item every commodity search keeps its front rows with
+-- price, quantity and sellers, only when they changed - to follow what one seller does (e.g. a
+-- single unit far under the market, again and again). Local only: never uploaded, never sent.
+-- ns.db.traceItems = { [itemID] = true }, ns.db.traceLog[itemID] = { { t, rows }... } with rows
+-- "unit:qty:owner/owner(+n);...", kept TRACE_KEEP, at most TRACE_MAX entries per item.
+local TRACE_ROWS, TRACE_KEEP, TRACE_MAX = 12, 48 * 3600, 20000
+
+local function trace(itemID)
+  local api = C_AuctionHouse
+  local parts = {}
+  for i = 1, math.min(TRACE_ROWS, api.GetNumCommoditySearchResults(itemID) or 0) do
+    local r = api.GetCommoditySearchResultInfo(itemID, i)
+    if r and r.unitPrice then
+      local owners = type(r.owners) == "table" and table.concat(r.owners, "/") or ""
+      local more = (r.totalNumberOfOwners or 0) - (type(r.owners) == "table" and #r.owners or 0)
+      parts[#parts + 1] = string.format("%d:%d:%s%s", r.unitPrice, r.quantity or 0, owners,
+        more > 0 and ("(+" .. more .. ")") or "")
+    end
+  end
+  local rows = table.concat(parts, ";")
+  ns.db.traceLog = ns.db.traceLog or {}
+  local log = ns.db.traceLog[itemID] or {}
+  ns.db.traceLog[itemID] = log
+  local last = log[#log]
+  if last and last[2] == rows then return end
+  log[#log + 1] = { time(), rows }
+  if #log > TRACE_MAX then table.remove(log, 1) end
+end
+
+-- "/m4 spur <item>": switches the trace of an item on or off.
+function Obs.ToggleTrace(itemID)
+  ns.db.traceItems = ns.db.traceItems or {}
+  local on = not ns.db.traceItems[itemID]
+  ns.db.traceItems[itemID] = on or nil
+  return on
+end
+
 local function commodityResults(_, itemID)
   local api = C_AuctionHouse
   if not (api and api.GetNumCommoditySearchResults and api.GetCommoditySearchResultInfo) then return end
+  if ns.db.traceItems and ns.db.traceItems[itemID] then ns.Safe(trace, itemID) end
   local offers = {}
   -- With not all rows loaded q holds the units of the loaded ones (cheapest first) - the cheap
   -- end, which is what the price levels describe.
@@ -163,4 +201,15 @@ if ns.On then
   -- also on logout: a long session (several full scans) must not write more than the cap
   ns.On("PLAYER_LOGOUT", function() Obs.Prune() end)
 end
-if ns.OnReady then ns.OnReady(function() Obs.Prune() end) end
+if ns.OnReady then
+  ns.OnReady(function()
+    Obs.Prune()
+    -- old trace entries go on login
+    local cut = time() - TRACE_KEEP
+    for id, log in pairs(ns.db.traceLog or {}) do
+      local keep = {}
+      for _, e in ipairs(log) do if e[1] >= cut then keep[#keep + 1] = e end end
+      ns.db.traceLog[id] = #keep > 0 and keep or nil
+    end
+  end)
+end

@@ -249,6 +249,14 @@ SlashCmdList.M4COMPANION = function(msg)
     if not (ns.TradeBook and ns.TradeBook.ShowBoxenstopp()) then
       print("|cffffd100M4:|r Der Boxenstopp-Planer ist aus: Einstellungen → Min-Max-Optimierung.")
     end
+  elseif cmd and cmd:lower() == "spur" then
+    -- /m4 spur <item>: trace the item's front offers with their sellers (local, see Observations.lua)
+    local id, err = ns.ItemDetail.Resolve(rest)
+    if not id then print("|cffffd100M4:|r " .. (err or "?")) return end
+    local on = ns.Obs.ToggleTrace(id)
+    print(string.format("|cffffd100M4:|r Spur %s: %s", ns.ItemName(id) or id,
+      on and "|cff5fd38dan|r – jede Suche (Detail-Fenster sucht jede Sekunde) wird mit Verkäufern protokolliert"
+        or "|cffff6b6baus|r"))
   elseif msg == "overlay" or msg == "tageshandel" then
     -- /m4 overlay: the small movable day-trading overlay on and off (DayTradeOverlay.lua)
     if ns.DayTradeOverlay then ns.Safe(ns.DayTradeOverlay.Toggle) end
