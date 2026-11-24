@@ -735,6 +735,24 @@ local function attachAuctions()
   local layer = CreateFrame("Frame", nil, af)
   af.m4Rows = layer
   ns.Safe(attachCancelButton, af)
+  -- an item chosen in the left list of "Auktionen": its market data window docked at the auction
+  -- house (offers, whether the own ones are undercut); "Alle Auktionen" or leaving the tab closes it
+  local AUCTIONS_ORIGIN = "ahauctions"
+  local function ownDetail() return ns.ItemDetail and ns.ItemDetail.Origin and ns.ItemDetail.Origin() == AUCTIONS_ORIGIN end
+  if af.SelectItemKey then
+    hooksecurefunc(af, "SelectItemKey", function(_, itemKey)
+      local id = type(itemKey) == "table" and itemKey.itemID
+      if id and ns.ItemDetail then
+        ns.Safe(ns.ItemDetail.Show, id, { anchor = AuctionHouseFrame, origin = AUCTIONS_ORIGIN, skin = "blizzard", itemKey = itemKey })
+      end
+    end)
+  end
+  if af.SetItemKey then
+    hooksecurefunc(af, "SetItemKey", function(_, itemKey)
+      if itemKey == nil and ownDetail() then ns.Safe(ns.ItemDetail.Hide) end
+    end)
+  end
+  af:HookScript("OnHide", function() if ownDetail() then ns.Safe(ns.ItemDetail.Hide) end end)
   -- Blizzard fills the list anew whenever the own auctions update (after every cancel, every
   -- query) and jumps to the top: the scroll position is kept when it is the same list again
   -- (about as many entries: one more or less after a cancel or a new auction)
