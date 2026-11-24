@@ -1078,9 +1078,10 @@ do
 
   -- Today's result of baiting and fishing one item, valued at the market price now:
   --   catches: units and what they cost; their worth = units x (market after cut - deposit)
-  --   baits: a sold bait brought less than the market (the gap after cut is its cost), an
-  --   expired or cancelled one lost its deposit (from the ledger's mails: a sale shows up when
-  --   its mail arrives, up to an hour later)
+  --   baits: a sold bait is a real loss against what the unit cost the player (own cost from the
+  --   ledger, Profit.UnitCost; the market price only without one): cost − what the bait brought
+  --   after the cut; an expired or cancelled one lost its deposit (from the ledger's mails: a
+  --   sale shows up when its mail arrives, up to an hour later)
   -- Returns { units, paid, worth, baits, sold, lost, baitCost, result } or nil without anything.
   function Fish.Balance(id, market, dep)
     local log = Fish.DB().log
@@ -1096,6 +1097,13 @@ do
     end
     if b.catches == 0 and b.baits == 0 then return nil end
     local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
+    local own
+    if ns.Profit and ns.Profit.UnitCost then
+      local ok, c = pcall(ns.Profit.UnitCost, id)
+      if ok and c and c > 0 then own = c end
+    end
+    own = own or market
+    b.own = own
     local used = {}
     for _, bait in ipairs(baits) do
       for k, e in ipairs(events) do
@@ -1103,7 +1111,7 @@ do
           if e.k == "sale" and math.abs((e.c or 0) - bait.p) <= 1 then
             used[k] = true
             b.sold = b.sold + 1
-            if market then b.baitCost = b.baitCost + math.max(0, market - bait.p) * (1 - FISH_CUT) end
+            if own then b.baitCost = b.baitCost + math.max(0, own - bait.p * (1 - FISH_CUT)) end
             break
           elseif e.k == "expired" or e.k == "cancelled" then
             used[k] = true
@@ -1423,8 +1431,16 @@ do
     elseif not loc then
       look(ui.fishBtn, false, false, "Köder-Stück gerade gesperrt", nil)
     else
+      -- what the bait costs when someone takes it: own cost minus what it brings after the cut
+      local own
+      if ns.Profit and ns.Profit.UnitCost then
+        local ok, c = pcall(ns.Profit.UnitCost, id)
+        if ok and c and c > 0 then own = c end
+      end
+      local loss = own and (own - plan.bait * (1 - FISH_CUT)) or nil
       look(ui.fishBtn, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, "Köder setzen (" .. money(plan.bait) .. ")",
-        "1 Stück zu " .. money(plan.bait) .. " für 2 h einstellen (Gebühr etwa " .. money(plan.dep or 0) .. ")")
+        "1 Stück zu " .. money(plan.bait) .. " für 2 h einstellen (Gebühr etwa " .. money(plan.dep or 0) .. ")"
+          .. (loss and loss > 0 and ("\nWird er weggekauft: −" .. money(loss) .. " gegenüber deinem Einstand " .. money(own)) or ""))
     end
   end
 
@@ -1660,6 +1676,9 @@ do
         end
         GameTooltip:AddDoubleLine(string.format("Köder: %d gesetzt, %d verkauft, %d abgelaufen", bal.baits, bal.sold, bal.lost),
           "−" .. money(bal.baitCost), 1, 1, 1, 1, 0.42, 0.42)
+        if bal.own then
+          GameTooltip:AddLine("Verkaufter Köder = Einstand " .. money(bal.own) .. " minus Erlös nach Gebühr", 0.6, 0.6, 0.62, true)
+        end
         if bal.result then
           GameTooltip:AddDoubleLine("Ergebnis", (bal.result >= 0 and "+" or "−") .. money(math.abs(bal.result)),
             1, 0.82, 0, bal.result >= 0 and 0.37 or 1, bal.result >= 0 and 0.83 or 0.42, bal.result >= 0 and 0.55 or 0.42)
