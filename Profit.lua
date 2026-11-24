@@ -662,38 +662,56 @@ end
 
 -- What the character really holds of an item: bags, bank (once seen) and own running
 -- auctions. nil when the bank was never opened (then nothing is capped).
--- Sold auctions whose sale mail is not in the ledger yet ("unterwegs"), over the household:
+-- Sold auctions whose sale is not in the ledger yet ("AH Transit"), over the household:
 -- { [itemID] = { n = units, value = what they bring after the cut } }. A sold entry of the own
--- auction list (MyAuctions, s = 1) counts until sales of the item are booked from about an hour
--- before that list was read (the mail comes about an hour after the sale).
+-- auction list (MyAuctions, s = 1) is remembered by its auction id in ns.db.transitSold - the
+-- game drops it from that list once the mail is sent, but until the mailbox is opened the sale
+-- is not booked either. It counts until sales of the item are booked from about an hour before
+-- it was seen (the mail comes about an hour after the sale), oldest first; after 31 days (the
+-- mail is gone) it is forgotten.
 function Profit.Transit()
-  local out = {}
-  local keys = ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}
-  local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
-  for _, key in ipairs(keys) do
+  local store = ns.db and ns.db.transitSold
+  if ns.db and not store then store = {}; ns.db.transitSold = store end
+  store = store or {}
+  for _, key in ipairs(ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}) do
     local owned = ns.db.owned and ns.db.owned[key]
     for _, a in ipairs(owned and owned.list or {}) do
-      if a.i and a.s then
-        local t = out[a.i] or { n = 0, value = 0, since = owned.t or 0 }
+      if a.i and a.s and a.id and not store[a.id] then
         local q = a.q or 1
         local gross = (a.u and a.u * q) or a.b or 0
-        t.n, t.value = t.n + q, t.value + math.floor(gross * 0.95 + 0.5)
-        t.since = math.min(t.since, owned.t or 0)
-        out[a.i] = t
+        store[a.id] = { i = a.i, q = q, v = math.floor(gross * 0.95 + 0.5), t = owned.t or time() }
       end
     end
   end
-  for id, t in pairs(out) do
+  local now = time()
+  local byItem = {}
+  for id, x in pairs(store) do
+    if type(x) ~= "table" or now - (x.t or 0) > 31 * 86400 then store[id] = nil
+    else
+      byItem[x.i] = byItem[x.i] or {}
+      table.insert(byItem[x.i], { id = id, x = x })
+    end
+  end
+  local events = ns.Ledger and ns.Ledger.HouseholdEvents and ns.Ledger.HouseholdEvents() or {}
+  local out = {}
+  for item, list in pairs(byItem) do
+    table.sort(list, function(p, q) return (p.x.t or 0) < (q.x.t or 0) end)
+    local from = (list[1].x.t or 0) - 3700
     local booked = 0
     for i = #events, 1, -1 do
       local e = events[i]
-      if (e.t or 0) < t.since - 3700 then break end
-      if e.k == "sale" and idOf(e) == id and not e.src then booked = booked + (e.u or 1) end
+      if (e.t or 0) < from then break end
+      if e.k == "sale" and idOf(e) == item and not e.src then booked = booked + (e.u or 1) end
     end
-    if booked >= t.n then out[id] = nil
-    elseif booked > 0 then
-      t.value = math.floor(t.value * (t.n - booked) / t.n + 0.5)
-      t.n = t.n - booked
+    for _, it in ipairs(list) do
+      if booked >= it.x.q then
+        booked = booked - it.x.q
+        store[it.id] = nil -- its sale is booked
+      else
+        local t = out[item] or { n = 0, value = 0 }
+        t.n, t.value = t.n + it.x.q, t.value + it.x.v
+        out[item] = t
+      end
     end
   end
   return out
