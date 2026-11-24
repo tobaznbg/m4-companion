@@ -1147,6 +1147,18 @@ do
   -- Diagnostics for "/m4 fisch": counters of what happened this session.
   Fish.stat = { results = 0, asks = 0, autoAsks = 0, quotes = 0, buys = 0, misses = 0 }
 
+  function Fish.Plan(id)
+    local rows = Fish.rows
+    if not (id and rows and rows.id == id) then return nil end
+    local c = Fish.Cfg(id)
+    local e = ns.Item.Get(id)
+    return Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, c.budget, Fish.DB().spent)
+  end
+
+  local function inCombat() return InCombatLockdown and InCombatLockdown() and true or false end
+  local function ahOpen() return ns.AHSearch and ns.AHSearch.IsOpen() or false end
+  local function live() return Big.IsShown() and shownID ~= nil and rangeDef().key == "live" end
+
   -- "/m4 fisch": what the fishing sees and did (for finding out why nothing is bought)
   function Detail.FishStatus()
     local P, st = "|cffffd100M4 Fischen:|r ", Fish.stat
@@ -1168,17 +1180,6 @@ do
       math.max(0, (Fish.cooldown or 0) - GetTime()), st.lastQuote or "–"))
   end
 
-  function Fish.Plan(id)
-    local rows = Fish.rows
-    if not (id and rows and rows.id == id) then return nil end
-    local c = Fish.Cfg(id)
-    local e = ns.Item.Get(id)
-    return Detail.FishPlan(rows.list, e and e.vendorSell, c.minGain, c.budget, Fish.DB().spent)
-  end
-
-  local function inCombat() return InCombatLockdown and InCombatLockdown() and true or false end
-  local function ahOpen() return ns.AHSearch and ns.AHSearch.IsOpen() or false end
-  local function live() return Big.IsShown() and shownID ~= nil and rangeDef().key == "live" end
 
   -- Fishing mode: while the live view is shown at the auction house (the fish button is there),
   -- every other auction house query of the addon stands still - the full scan, the sniper, the
