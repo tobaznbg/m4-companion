@@ -1,6 +1,6 @@
 -- DayTradeOverlay: a small movable box on the screen (like LayerSwap's) for checking the day
 -- trading on the go: how fresh the data is, what to buy now (with the expected profit for a
--- fixed capital, 10g) and what to post now. A click on a line opens the ledger's "Tageshandel"
+-- fixed capital, 25g) and what to post now. A click on a line opens the ledger's "Tageshandel"
 -- tab on that item (and searches it when the auction house is open); right click hides the box,
 -- "/m4 overlay" brings it back. The numbers come from DayTrade.lua (Trade.States), so the box and
 -- the tab never disagree.
@@ -9,7 +9,7 @@ local ADDON, ns = ...
 local Overlay = {}
 ns.DayTradeOverlay = Overlay
 
-local CAPITAL = 100000 -- copper: the money the buy suggestions are planned with (10g)
+local CAPITAL = 250000 -- copper: the money the buy suggestions are planned with (25g)
 local MAX_LINES = 5
 local WIDTH = 290
 local GREEN, RED, MUTED, GOLD = "|cff5fd38d", "|cffff6b6b", "|cff999999", "|cffffd100" -- luacheck: ignore RED
