@@ -1251,8 +1251,8 @@ end
 -- The card in the profession window's look: icon and name, how it is learned where Blizzard
 -- shows the description, "Reagenzien:" with slots and prices, then the summary rows the
 -- profession window gets from this addon (Herstellkosten, Erlös, Nachfrage, line, Gewinn).
-local SUMMARY = { "Herstellkosten", "Erlös", "Nachfrage", "Gewinn" }
-local GATHER_SUMMARY = { "Preis jetzt", "Erlös (nach Gebühr)", "Nachfrage", "Wert pro Stück" }
+local SUMMARY = { "Herstellkosten", "Erlös", "Nachfrage", "Sättigung", "Gewinn" }
+local GATHER_SUMMARY = { "Preis jetzt", "Erlös (nach Gebühr)", "Nachfrage", "Sättigung", "Wert pro Stück" }
 local function productCard(c)
   local v = ns.NativeWindow.CardHead(c)
   -- "Erlernen:" with one line per way to learn it (unlearned recipes), where Blizzard shows the
@@ -1543,13 +1543,18 @@ local function showProduct(entry, c)
     e.unpriced and (money(e.cost) .. "|cffff6b6b + ?|r") or money(e.cost),
     money(e.value) .. (e.onAH and "" or "|cff999999  H|r"),
     ns.Item.DemandText(e) or "–",
+    "–",
     e.unpriced and "|cff999999? (ein Reagenz ohne Preis)|r" or signedMoney(e.profit),
   }
+  -- saturation of the product's market (colored like in the market data: green undersupplied)
+  local item = e.itemID and ns.Item(e.itemID)
+  local sat, _, satColor = ns.Item.SaturationText(item)
+  if sat then values[4] = satColor .. sat .. "|r" end
   local labels = SUMMARY
   if e.gather then
     labels = GATHER_SUMMARY
     values[1] = e.nowPrice and money(e.nowPrice) or "nicht im Angebot"
-    values[4] = money(e.value)
+    values[5] = money(e.value)
   end
   for i, row in ipairs(v.rows) do
     row.label:SetText(labels[i])
