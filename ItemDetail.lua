@@ -1059,8 +1059,8 @@ do
   local Fish = {}
   local FISH_DURATION = 1 -- 2 h in this client (Selling.lua's durations: 1 = 2 h, 2 = 8 h, 3 = 24 h)
   local FISH_GAINS = { 0.10, 0.15, 0.20, 0.30 }
-  local FISH_BUDGETS = { 100000, 250000, 500000, 1000000 }
-  local FISH_DEFAULT = { minGain = 0.15, budget = 100000 }
+  local FISH_BUDGETS = { 100000, 250000, 300000, 500000, 1000000 }
+  local FISH_DEFAULT = { minGain = 0.15, budget = 300000 }
   -- seconds: no answer to a quote, an unclicked "Bestätigen", no answer to a buy, and the pause
   -- after a dropped quote before the next one is asked by itself
   local QUOTE_TIMEOUT, CONFIRM_TIMEOUT, BUY_TIMEOUT, COOLDOWN = 5, 30, 10, 3
