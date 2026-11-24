@@ -79,10 +79,13 @@ local function row(i)
   b.left = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   b.left:SetPoint("LEFT", 0, 0)
   b.left:SetJustifyH("LEFT")
+  -- one line each: long names end in "…" instead of wrapping
   b.left:SetWordWrap(false)
+  if b.left.SetMaxLines then b.left:SetMaxLines(1) end
   b.right = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   b.right:SetPoint("RIGHT", 0, 0)
   b.right:SetJustifyH("RIGHT")
+  b.right:SetWordWrap(false)
   b.left:SetPoint("RIGHT", b.right, "LEFT", -6, 0)
   local hl = b:CreateTexture(nil, "HIGHLIGHT")
   hl:SetAllPoints()
@@ -121,7 +124,7 @@ local function refresh()
   local lines = {}
   local function add(l) lines[#lines + 1] = l end
   if #states == 0 then
-    add({ text = MUTED .. "Keine Tageshandel-Daten für dieses Auktionshaus.|r" })
+    add({ text = MUTED .. "keine Daten für dieses AH|r" })
   else
     -- buy now: everything in its buy window under the limit, best expected profit first
     local buys = {}
@@ -132,7 +135,7 @@ local function refresh()
       end
     end
     table.sort(buys, function(a, b) return a.profit > b.profit end)
-    add({ head = string.format("Jetzt kaufen  %s(Kapital %s)|r", MUTED, money(CAPITAL)) })
+    add({ head = string.format("Kaufen %s%s|r", MUTED, money(CAPITAL)) })
     if #buys == 0 then add({ text = MUTED .. "–|r" }) end
     for i = 1, math.min(#buys, MAX_LINES) do
       local b = buys[i]
@@ -149,12 +152,12 @@ local function refresh()
       if s.phase == "sell" and s.held > 0 and s.post then sells[#sells + 1] = s end
     end
     table.sort(sells, function(a, b) return a.post * a.held > b.post * b.held end)
-    add({ head = "Jetzt einstellen", gap = true })
+    add({ head = "Einstellen", gap = true })
     if #sells == 0 then add({ text = MUTED .. "–|r" }) end
     for i = 1, math.min(#sells, MAX_LINES) do
       local s = sells[i]
       add({ itemID = s.itemID, text = ns.ItemName(s.itemID) or ("Item " .. s.itemID),
-        right = string.format("%d× zu %s%s|r", s.held, s.post == s.ask and GREEN or GOLD, money(s.post)),
+        right = string.format("%d× %s%s|r", s.held, s.post == s.ask and GREEN or GOLD, money(s.post)),
         tip = s.post == s.ask and "2 h einstellen zum Zielpreis."
           or "2 h einstellen, 1 Kupfer unter dem Günstigsten (der liegt unter dem Zielpreis)." })
     end
@@ -209,8 +212,14 @@ local function create()
   end
   title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOPLEFT", 10, -8)
+  title:SetPoint("RIGHT", frame, "RIGHT", -10, 0)
+  title:SetJustifyH("LEFT")
+  title:SetWordWrap(false)
   fresh = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   fresh:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
+  fresh:SetPoint("RIGHT", frame, "RIGHT", -10, 0)
+  fresh:SetJustifyH("LEFT")
+  fresh:SetWordWrap(false)
   rows = {}
   frame:SetScript("OnShow", refresh)
   -- prices age and the hour moves items between buy, sell and wait: redraw regularly
