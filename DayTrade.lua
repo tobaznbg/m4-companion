@@ -201,6 +201,8 @@ function Trade.States()
   return out
 end
 Trade.CUT, Trade.Ago, Trade.CAPITAL, Trade.NextWindowText = CUT, ago, CAPITAL, nextWindowText
+-- the windows' length, for the price chart's buy / sell bands (ItemDetail.lua)
+Trade.WINDOW_HOURS = WINDOW_HOURS
 
 -- Card -------------------------------------------------------------------------------------
 

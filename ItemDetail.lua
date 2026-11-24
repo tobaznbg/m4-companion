@@ -12,11 +12,17 @@
 -- Opened while the auction house is open, it searches the item right away (ns.AHSearch,
 -- one search a second, through the sniper while it runs): "suche …", then the price stair
 -- and "AH jetzt" of that search ("Preistreppe (gerade gesucht)").
+-- "Details" right of the chart's view switch opens the big price chart (Detail.Big, below) in
+-- a movable window of its own; it follows the item shown here while it is open.
 local ADDON, ns = ...
 
 local Detail = {}
 ns.ItemDetail = Detail
 ns.SniperDetail = Detail -- old name, kept for callers that still use it
+-- The big price chart window ("Details"); filled in its own section below, declared here
+-- because the small chart's button and render() call it.
+local Big = {}
+Detail.Big = Big
 
 local WIDTH = 340
 local FREE_HEIGHT = 560 -- height as a window of its own (docked it follows the anchor)
@@ -324,7 +330,21 @@ local function createChart()
   c.empty = Style.Text(c.plot, 11)
   c.empty:SetPoint("CENTER")
   c.empty:SetTextColor(unpack(Style.C.muted))
-  -- Segment switch "48 h | 7 Tage" on the section's title row, right above the chart.
+  -- "Details" at the right end of the title row: the big chart of this item (Detail.Big).
+  -- Apart from the segment switch (a gap), since it opens a window instead of switching a view.
+  c.details = Style.Button(c, "Details", 50, 16, function()
+    if itemID then ns.Safe(Big.Toggle, itemID) end
+  end)
+  c.details.label:SetFontObject(Style.Font(10))
+  c.details:SetPoint("BOTTOMRIGHT", c.plot, "TOPRIGHT", 0, 5)
+  c.details:HookScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Großes Diagramm")
+    GameTooltip:AddLine("Preisverlauf dieses Items in einem eigenen Fenster, feinste Auflösung.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  c.details:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  -- Segment switch "48 h | 7 Tage" on the section's title row, left of "Details".
   c.views = {}
   local right
   for k = #VIEW_ORDER, 1, -1 do
@@ -338,7 +358,7 @@ local function createChart()
     if right then
       b:SetPoint("BOTTOMRIGHT", right, "BOTTOMLEFT", 1, 0) -- shared border, one segment control
     else
-      b:SetPoint("BOTTOMRIGHT", c.plot, "TOPRIGHT", 0, 5)
+      b:SetPoint("BOTTOMRIGHT", c.details, "BOTTOMLEFT", -4, 0)
     end
     b.key = key
     c.views[key] = b
@@ -386,6 +406,17 @@ local function hideFrom(list, first)
   for i = first, #list do list[i]:Hide() end
 end
 
+-- "Details" lit while the big chart shows this window's item.
+local function updateDetailsButton()
+  local b = chart and chart.details
+  if not b then return end
+  local on = itemID ~= nil and Big.Shows(itemID)
+  b.active = on
+  b.bg:SetColorTexture(unpack(on and ns.Style.C.buttonHi or ns.Style.C.button))
+  b.label:SetTextColor(unpack(on and lineColor() or ns.Style.C.muted))
+end
+Detail.UpdateDetailsButton = updateDetailsButton
+
 -- Draws the history on the fixed axis of the chosen view (48 hours in 1-hour slots or 7 days
 -- in 2-hour slots, "jetzt" at the right edge): quantity as muted bars, cheapest offer as an
 -- accent line (broken where the item was sold out or no snapshot exists), sold-out slots as
@@ -397,6 +428,7 @@ local function drawChart(c, history, limit, sellAt, viewKey)
   local view = VIEWS[viewKey] or VIEWS["48h"]
   local SPAN = view.span
   local plot = c.plot
+  updateDetailsButton()
   for key, b in pairs(c.views) do
     local on = key == viewKey
     b.active = on
@@ -666,6 +698,833 @@ function Detail.ChartHover(x)
   end
   b:Show()
   return text
+end
+
+-- Big chart ("Details") ----------------------------------------------------------------
+-- The price history of one item in a large window of its own (NativeWindow look), opened by
+-- "Details" over the small chart and following the market data window's item while open.
+-- Finest slots the data has (Detail.FineSeries): the hourly ones where the collector sent
+-- them (last 48 hours), the 2-hour ones before. Only the chart: price grid, day changes and
+-- hour marks, the quantity as bars on their own smaller scale, R and - for an item of the day
+-- trading pool - its buy limit, ask and the daily buy / sell windows as bands.
+-- Prices are volatile: while open it redraws on new observations of the item (own searches
+-- and scans, other players' via the cloud or the addon channel; bundled, at most once a
+-- second) and every 30 seconds (age, "jetzt" edge, windows). Every price the item showed
+-- this session that is newer than the history (Item.Get's now, by its time) is kept and
+-- drawn as a lighter live tail right of the curve.
+-- Every texture, line and label is pooled per kind and reused on each redraw; OnUpdate only
+-- tracks the mouse.
+
+-- The finest history of an item: the 2-hour slots up to where the hourly ones begin, then
+-- the hourly ones. { t0 = {}, t1 = {}, p = {}, q = {} } per slot (p: cheapest offer, 0 = not
+-- listed, false = no snapshot), first = start of the first slot with a snapshot, hourFrom =
+-- start of the hourly slots (nil without), lastT = start of the last slot with a snapshot;
+-- nil without any history.
+function Detail.FineSeries(id)
+  local coarse = ns.Item.History(id)
+  local fine = ns.Item.History(id, true)
+  if fine and not fine.hourly then fine = nil end -- no hourly line: History gave the 2-hour one
+  local s = { t0 = {}, t1 = {}, p = {}, q = {}, hourFrom = fine and fine.start or nil }
+  local cut = fine and fine.start or math.huge
+  local function add(t0, t1, p, q)
+    local n = #s.t0 + 1
+    s.t0[n], s.t1[n], s.p[n], s.q[n] = t0, t1, p, q or false
+    if p ~= false and p ~= nil then
+      s.first = s.first or t0
+      s.lastT = t0
+    end
+  end
+  if coarse then
+    for i = 1, #coarse.prices do
+      local t0 = coarse.start + (i - 1) * coarse.step
+      if t0 >= cut then break end
+      -- a 2-hour slot reaching into the hourly ones ends where they begin
+      add(t0, math.min(t0 + coarse.step, cut), coarse.prices[i], coarse.qty[i])
+    end
+  end
+  if fine then
+    for i = 1, #fine.prices do
+      local t0 = fine.start + (i - 1) * fine.step
+      add(t0, t0 + fine.step, fine.prices[i], fine.qty[i])
+    end
+  end
+  return #s.t0 > 0 and s or nil
+end
+
+do
+  local NAME = "M4CompanionPriceChart"
+  local W, H = 900, 520
+  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 64, 34 -- plot margins in the page
+  local RANGES = {
+    { key = "2d", span = 2 * 86400, button = "2 Tage", label = "2 Tage" },
+    { key = "7d", span = 7 * 86400, button = "7 Tage", label = "7 Tage" },
+    { key = "all", button = "Alles", label = "alles" },
+  }
+  local BUY_RGB, SELL_RGB = { 0.37, 0.83, 0.55 }, { 0.45, 0.68, 1 }
+  local OUT_RGB, TAIL_RGB = { 1, 0.71, 0.28 }, { 0.85, 0.95, 1 }
+  local SOURCES = { cloud = "Cloud-Snapshot", scan = "eigener Vollscan", search = "eigene Suche",
+    players = "andere Spieler (Cloud)", live = "andere Spieler (live)" }
+  local TAIL_MAX = 200 -- live points kept per item and house
+  local win, ui, shownID, ticker, pending
+  local draw, hover -- forward declared
+  local used = {}
+  local tails = {} -- "house:itemID" -> { { t, p, q, src }... } oldest first, this session
+
+  -- Epoch of a German time (Detail.Berlin's inverse; off by an hour only inside the DST hour).
+  local function fromBerlin(b)
+    local t = b - 7200
+    if berlin(t) ~= b then t = b - 3600 end
+    return t
+  end
+
+  -- "Mo 23.11., 14:37" in German time.
+  local function stampFull(t)
+    local b = berlin(t)
+    return (WEEKDAYS[tonumber(date("!%w", b)) + 1] or "") .. " " .. date("!%d.%m., %H:%M", b)
+  end
+
+  -- A 1 px line on whole screen pixels: with a scaled UI a plain 1 px line can round to nothing.
+  local function thin(t, vertical)
+    if vertical then
+      if PixelUtil and PixelUtil.SetWidth then PixelUtil.SetWidth(t, 1, 1) else t:SetWidth(1) end
+    elseif PixelUtil and PixelUtil.SetHeight then PixelUtil.SetHeight(t, 1, 1) else t:SetHeight(1) end
+  end
+
+  -- Pools: take(kind) hands out the next object of a kind (made by MAKERS[kind] on first
+  -- need), finish() hides what this draw did not use. No objects are made on a redraw that
+  -- needs no more than an earlier one.
+  local function tex(layer, sub, r, g, b, a)
+    local t = ui.plot:CreateTexture(nil, layer, nil, sub)
+    t:SetColorTexture(r, g, b, a)
+    return t
+  end
+  local function label(parent, template)
+    local fs = parent:CreateFontString(nil, "OVERLAY", template)
+    fs:SetWordWrap(false)
+    return fs
+  end
+  local MAKERS = {
+    band = function() return tex("BACKGROUND", 1, 1, 1, 1, 0.08) end,
+    vgrid = function() local t = tex("BACKGROUND", 2, 1, 1, 1, 0.04); thin(t, true); return t end,
+    grid = function() local t = tex("BACKGROUND", 3, 1, 1, 1, 0.08); thin(t); return t end,
+    day = function() local t = tex("BACKGROUND", 4, 1, 1, 1, 0.22); thin(t, true); return t end,
+    bar = function() return tex("BORDER", 0, 1, 1, 1, 0.13) end,
+    dash = function() local t = tex("ARTWORK", 1, 1, 1, 1, 1); thin(t); return t end,
+    mark = function() return tex("OVERLAY", 0, 1, 1, 1, 1) end,
+    line = function()
+      local l = ui.plot:CreateLine(nil, "ARTWORK", nil, 2)
+      l:SetThickness(1.5)
+      return l
+    end,
+    yLabel = function()
+      local fs = label(ui.page, "GameFontHighlightSmall")
+      fs:SetTextColor(0.7, 0.7, 0.72)
+      fs:SetJustifyH("RIGHT")
+      return fs
+    end,
+    hourLabel = function()
+      local fs = label(ui.page, "GameFontHighlightSmall")
+      fs:SetTextColor(0.6, 0.6, 0.62)
+      return fs
+    end,
+    dayLabel = function() return label(ui.page, "GameFontNormalSmall") end,
+    refLabel = function() return label(ui.page, "GameFontHighlightSmall") end,
+  }
+  local function take(kind)
+    local n = (used[kind] or 0) + 1
+    used[kind] = n
+    local list = ui.pool[kind]
+    local o = list[n]
+    if not o then o = MAKERS[kind](); list[n] = o end
+    o:Show()
+    return o
+  end
+  local function finish()
+    for kind, list in pairs(ui.pool) do hideFrom(list, (used[kind] or 0) + 1) end
+  end
+
+  -- A line segment in plot coordinates (bottom left = 0, 0); nothing without CreateLine.
+  local function segment(x0, y0, x1, y1, rgb, alpha)
+    if not ui.plot.CreateLine then return end
+    local l = take("line")
+    l:SetColorTexture(rgb[1], rgb[2], rgb[3], alpha or 1)
+    l:SetStartPoint("BOTTOMLEFT", ui.plot, x0, y0)
+    l:SetEndPoint("BOTTOMLEFT", ui.plot, x1, y1)
+  end
+
+  -- A small square centered on x, yy (or a bar of size w x h when given).
+  local function mark(x, yy, size, rgb, alpha)
+    local m = take("mark")
+    m:SetColorTexture(rgb[1], rgb[2], rgb[3], alpha or 1)
+    m:ClearAllPoints()
+    m:SetPoint("CENTER", ui.plot, "BOTTOMLEFT", x, yy)
+    m:SetSize(size, size)
+    return m
+  end
+
+  -- A dashed horizontal line across the plot at height yy.
+  local function dashed(yy, w, rgb)
+    local x = 0
+    while x < w do
+      local d = take("dash")
+      d:SetColorTexture(rgb[1], rgb[2], rgb[3], 0.85)
+      d:ClearAllPoints()
+      d:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x, yy)
+      d:SetWidth(math.min(6, w - x))
+      x = x + 10
+    end
+  end
+
+  -- 1, 2 or 5 times a power of ten, whole copper: about n steps over range.
+  local function niceStep(range, n)
+    local raw = math.max(range / n, 1)
+    local mag = 1 -- the power of ten at or under raw (a loop: exact, no float logarithm)
+    while mag * 10 <= raw do mag = mag * 10 end
+    local f = raw / mag
+    return (f <= 1 and 1 or f <= 2 and 2 or f <= 5 and 5 or 10) * mag
+  end
+
+  local function median(values)
+    local sorted = {}
+    for i, v in ipairs(values) do sorted[i] = v end
+    table.sort(sorted)
+    local m = #sorted
+    if m == 0 then return nil end
+    return m % 2 == 1 and sorted[(m + 1) / 2] or (sorted[m / 2] + sorted[m / 2 + 1]) / 2
+  end
+
+  local function rangeDef()
+    local k = ns.db and ns.db.itemDetail and ns.db.itemDetail.bigRange
+    for _, r in ipairs(RANGES) do
+      if r.key == k then return r end
+    end
+    return RANGES[2] -- 7 days
+  end
+
+  -- Live tail ------------------------------------------------------------------------------
+
+  -- The session's points of the item in the current house (created on first need).
+  local function tailOf(id)
+    local key = tostring(ns.AuctionHouse.CloudID() or ns.AuctionHouse.Current()) .. ":" .. id
+    local list = tails[key]
+    if not list then list = {}; tails[key] = list end
+    return list
+  end
+
+  -- Remembers the item's price now (Item.Get) as a point when its time is new. The cloud
+  -- snapshot is what the history is made of: it is not a live point.
+  local function record(id, e)
+    if not (e and e.dataT) or e.dataSource == "cloud" then return end
+    local list = tailOf(id)
+    local last = list[#list]
+    if last and last.t >= e.dataT then return end
+    list[#list + 1] = { t = e.dataT, p = e.now or 0, q = e.quantity, src = e.dataSource }
+    if #list > TAIL_MAX then table.remove(list, 1) end
+  end
+
+  -- Window ---------------------------------------------------------------------------------
+
+  local function setActive(b, on)
+    local bg = rawget(b, "bg")
+    if bg then -- the flat fallback button
+      b.active = on
+      bg:SetColorTexture(unpack(on and ns.Style.C.buttonHi or ns.Style.C.button))
+    elseif b.LockHighlight then
+      if on then b:LockHighlight() else b:UnlockHighlight() end
+    end
+    local fs = rawget(b, "label") or (b.GetFontString and b:GetFontString())
+    if fs then
+      if on then fs:SetTextColor(1, 1, 1) else fs:SetTextColor(1, 0.82, 0) end
+    end
+  end
+
+  local function button(parent, text, width, onClick)
+    local ok, b = pcall(CreateFrame, "Button", nil, parent, "UIPanelButtonTemplate")
+    if not (ok and b) then return ns.Style.Button(parent, text, width, 22, onClick) end
+    b:SetSize(width, 22)
+    b:SetText(text)
+    b:SetScript("OnClick", onClick)
+    return b
+  end
+
+  local function buildPage(page)
+    ui = { page = page, pool = {}, buttons = {} }
+    for kind in pairs(MAKERS) do ui.pool[kind] = {} end
+    -- head: icon (item tooltip), name, the figures of the range
+    ui.icon = page:CreateTexture(nil, "ARTWORK")
+    ui.icon:SetSize(36, 36)
+    ui.icon:SetPoint("TOPLEFT", 6, -2)
+    local hit = CreateFrame("Button", nil, page)
+    hit:SetAllPoints(ui.icon)
+    hit:SetScript("OnEnter", function(self)
+      if not shownID then return end
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:SetItemByID(shownID)
+      GameTooltip:Show()
+    end)
+    hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    ui.name = label(page, "GameFontHighlightLarge")
+    ui.name:SetPoint("TOPLEFT", ui.icon, "TOPRIGHT", 10, -1)
+    ui.name:SetPoint("RIGHT", page, "RIGHT", -240, 0)
+    ui.name:SetJustifyH("LEFT")
+    ui.stats = label(page, "GameFontHighlightSmall")
+    ui.stats:SetPoint("TOPLEFT", ui.name, "BOTTOMLEFT", 0, -5)
+    ui.stats:SetPoint("RIGHT", page, "RIGHT", -6, 0)
+    ui.stats:SetJustifyH("LEFT")
+    ui.legend = label(page, "GameFontHighlightSmall")
+    ui.legend:SetPoint("TOPLEFT", page, "TOPLEFT", LEFT, -46)
+    ui.legend:SetJustifyH("LEFT")
+    ui.res = label(page, "GameFontDisableSmall")
+    ui.res:SetPoint("TOPRIGHT", page, "TOPRIGHT", -RIGHT, -46)
+    ui.res:SetJustifyH("RIGHT")
+    -- the range switch, right in the head
+    local right
+    for k = #RANGES, 1, -1 do
+      local r = RANGES[k]
+      local b = button(page, r.button, 72, function()
+        ns.db.itemDetail = ns.db.itemDetail or {}
+        ns.db.itemDetail.bigRange = r.key
+        ns.Safe(draw)
+      end)
+      if right then
+        b:SetPoint("TOPRIGHT", right, "TOPLEFT", -4, 0)
+      else
+        b:SetPoint("TOPRIGHT", page, "TOPRIGHT", -6, -4)
+      end
+      ui.buttons[r.key] = b
+      right = b
+    end
+    -- the plot
+    local plot = CreateFrame("Frame", nil, page)
+    plot:SetPoint("TOPLEFT", LEFT, -TOP)
+    plot:SetPoint("BOTTOMRIGHT", -RIGHT, BOTTOM)
+    ui.plot = plot
+    local bg = plot:CreateTexture(nil, "BACKGROUND", nil, 0)
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0.3)
+    ui.base = tex("ARTWORK", 0, 1, 1, 1, 0.3)
+    ui.base:SetPoint("BOTTOMLEFT")
+    ui.base:SetPoint("BOTTOMRIGHT")
+    thin(ui.base)
+    ui.refLine = tex("ARTWORK", 1, 1, 1, 1, 0.6)
+    thin(ui.refLine)
+    ui.qty = label(plot, "GameFontDisableSmall")
+    ui.empty = label(plot, "GameFontDisable")
+    ui.empty:SetPoint("CENTER")
+    ui.cursor = tex("OVERLAY", 2, 1, 1, 1, 0.5)
+    ui.cursor:SetPoint("TOP")
+    ui.cursor:SetPoint("BOTTOM")
+    thin(ui.cursor, true)
+    ui.cursor:Hide()
+    ui.dot = tex("OVERLAY", 3, 1, 1, 1, 1)
+    ui.dot:SetSize(5, 5)
+    ui.dot:Hide()
+    -- hover: OnUpdate only while the mouse is over the plot
+    plot:EnableMouse(true)
+    local function track(self)
+      local x = GetCursorPosition()
+      local left = self:GetLeft()
+      if not (x and left) then return end
+      hover(x / (self:GetEffectiveScale() or 1) - left)
+    end
+    plot:SetScript("OnEnter", function(self) self:SetScript("OnUpdate", track) end)
+    plot:SetScript("OnLeave", function(self)
+      self:SetScript("OnUpdate", nil)
+      hover(nil)
+    end)
+  end
+
+  -- The time axis: day changes (line, weekday and date) and hour marks (every 3, 6 or 12
+  -- hours, as many as fit), all in German time.
+  local function drawAxis(v)
+    local hourPx = v.w / (v.span / 3600)
+    local hstep = hourPx * 3 >= 34 and 3 or (hourPx * 6 >= 22 and 6 or 12)
+    local unit = hstep * 3600
+    local bStart, bEnd = berlin(v.axisStart), berlin(v.axisEnd)
+    local firstDay
+    local b = math.ceil(bStart / unit) * unit
+    while b <= bEnd do
+      local x = (fromBerlin(b) - v.axisStart) / v.span * v.w
+      if x >= 0 and x <= v.w then
+        if b % 86400 == 0 then
+          local d = take("day")
+          d:ClearAllPoints()
+          d:SetPoint("TOPLEFT", ui.plot, "TOPLEFT", x, 0)
+          d:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x, -14)
+          local fs = take("dayLabel")
+          fs:ClearAllPoints()
+          fs:SetPoint("TOPLEFT", ui.plot, "BOTTOMLEFT", x + 3, -17)
+          fs:SetText((WEEKDAYS[tonumber(date("!%w", b)) + 1] or "") .. " " .. date("!%d.%m.", b))
+          firstDay = firstDay or x
+        else
+          local g = take("vgrid")
+          g:ClearAllPoints()
+          g:SetPoint("TOPLEFT", ui.plot, "TOPLEFT", x, 0)
+          g:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x, -3)
+          local fs = take("hourLabel")
+          fs:ClearAllPoints()
+          fs:SetPoint("TOP", ui.plot, "BOTTOMLEFT", x, -3)
+          fs:SetText(date("!%H", b))
+        end
+      end
+      b = b + unit
+    end
+    -- the day the axis starts in, when its first change leaves room for the label
+    if (firstDay or v.w) > 72 then
+      local fs = take("dayLabel")
+      fs:ClearAllPoints()
+      fs:SetPoint("TOPLEFT", ui.plot, "BOTTOMLEFT", 0, -17)
+      fs:SetText((WEEKDAYS[tonumber(date("!%w", bStart)) + 1] or "") .. " " .. date("!%d.%m.", bStart))
+    end
+  end
+
+  -- The day trading windows as bands over the whole height: buy green, sell blue, every day
+  -- of the axis (hours of the pool are German time = the PC's clock).
+  local function drawBands(v)
+    local r = v.rhythm
+    if not (r and type(r[1]) == "number" and type(r[2]) == "number") then return end
+    local hours = (ns.DayTrade and ns.DayTrade.WINDOW_HOURS or 3) * 3600
+    local bStart = berlin(v.axisStart)
+    local day = math.floor(bStart / 86400) * 86400 - 86400 -- the day before: a window over midnight
+    while day <= berlin(v.axisEnd) do
+      for k = 1, 2 do
+        local t0 = fromBerlin(day + r[k] * 3600)
+        local x0 = math.max(0, (t0 - v.axisStart) / v.span * v.w)
+        local x1 = math.min(v.w, (t0 + hours - v.axisStart) / v.span * v.w)
+        if x1 > x0 + 0.5 then
+          local band = take("band")
+          local rgb = k == 1 and BUY_RGB or SELL_RGB
+          band:SetColorTexture(rgb[1], rgb[2], rgb[3], 0.09)
+          band:ClearAllPoints()
+          band:SetPoint("TOPLEFT", ui.plot, "TOPLEFT", x0, 0)
+          band:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x0, 0)
+          band:SetWidth(x1 - x0)
+        end
+      end
+      day = day + 86400
+    end
+  end
+
+  -- Labels in the right margin (R, buy limit, ask, now) at their lines, pushed apart so
+  -- none covers another.
+  local function placeLabels(list, h)
+    local GAP = 12
+    table.sort(list, function(a, b) return a.y > b.y end)
+    local prev
+    for _, l in ipairs(list) do
+      l.ly = math.min(l.y, h - 4)
+      if prev and l.ly > prev - GAP then l.ly = prev - GAP end
+      prev = l.ly
+    end
+    local minY = 4
+    for k = #list, 1, -1 do
+      local l = list[k]
+      if l.ly < minY then l.ly = minY end
+      minY = l.ly + GAP
+    end
+    for _, l in ipairs(list) do
+      local fs = take("refLabel")
+      fs:ClearAllPoints()
+      fs:SetPoint("LEFT", ui.plot, "BOTTOMRIGHT", 8, l.ly)
+      fs:SetText(l.text)
+      fs:SetTextColor(l.rgb[1], l.rgb[2], l.rgb[3])
+    end
+  end
+
+  -- The head: name, the range's figures, how old "jetzt" is and where it is from.
+  local function drawHead(id, e, values, rng)
+    local getIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
+    local icon = getIcon and getIcon(id) or nil
+    ui.icon:SetTexture(icon)
+    if icon and icon ~= ui.portrait and win.frame.SetPortraitToAsset then
+      pcall(win.frame.SetPortraitToAsset, win.frame, icon)
+      ui.portrait = icon
+    end
+    local name = ns.ItemName(id) or ("#" .. id)
+    local q = C_Item and C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(id)
+    local color = q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
+    if color and color.hex then name = color.hex .. name .. "|r" end
+    ui.name:SetText(name .. "  " .. ns.Style.MUTED .. ns.AuctionHouse.Name() .. "|r")
+    local G, SEP = "|cffffd100", "      "
+    local parts = { G .. "jetzt|r " .. (e.now and money(e.now) or (ns.Style.MUTED .. "nicht im AH|r")) }
+    if #values > 0 then
+      local lo, hi = values[1], values[1]
+      for _, p in ipairs(values) do lo, hi = math.min(lo, p), math.max(hi, p) end
+      parts[#parts + 1] = string.format("%sMin|r %s  ·  %sMax|r %s  ·  %sMedian|r %s  %s(%s)|r", G, money(lo), G, money(hi),
+        G, money(median(values)), ns.Style.MUTED, rng.label)
+    end
+    parts[#parts + 1] = G .. "Nachfrage|r " .. (ns.Item.DemandColored(e) or "–")
+    local sat, _, satColor = ns.Item.SaturationText(e)
+    parts[#parts + 1] = G .. "Sättigung|r " .. (sat and (satColor .. sat .. "|r") or "–")
+    if e.dataT then
+      parts[#parts + 1] = G .. "Stand|r " .. ago(e.dataT) .. " " .. ns.Style.MUTED .. "(" .. (SOURCES[e.dataSource] or "?") .. ")|r"
+    end
+    ui.stats:SetText(table.concat(parts, SEP))
+  end
+
+  draw = function()
+    if not (ui and win and win.frame:IsShown() and shownID) then return end
+    local id = shownID
+    local e = ns.Item.Get(id)
+    record(id, e)
+    ui.drawnT, ui.drawnNow = e.dataT, e.now
+    for kind in pairs(used) do used[kind] = 0 end
+    hover(nil)
+    ui.view = nil
+    local rng = rangeDef()
+    for _, r in ipairs(RANGES) do setActive(ui.buttons[r.key], r == rng) end
+    local series = Detail.FineSeries(id)
+    local axisEnd = time()
+    local span = rng.span or (series and series.first and math.max(axisEnd - series.first, 6 * 3600)) or 7 * 86400
+    local w, h = ui.plot:GetWidth(), ui.plot:GetHeight()
+    if not w or w < 50 then w, h = W - 16 - LEFT - RIGHT, H - 68 - TOP - BOTTOM end -- before the first layout
+    local pool = ns.DayTrade and ns.DayTrade.Pool and ns.DayTrade.Pool()
+    local v = { id = id, e = e, series = series, axisStart = axisEnd - span, axisEnd = axisEnd, span = span,
+      w = w, h = h, vis = {}, tail = {}, rhythm = pool and pool[id] or nil }
+    local function X(t) return (t - v.axisStart) / span * w end
+    -- the slots on the axis, the live points after the history, their prices
+    local values, qmax, zeros = {}, 0, false
+    if series then
+      for i = 1, #series.t0 do
+        if series.t1[i] > v.axisStart and series.t0[i] < axisEnd then
+          v.vis[#v.vis + 1] = i
+          local p, q = series.p[i], series.q[i]
+          if p and p > 0 then values[#values + 1] = p elseif p == 0 then zeros = true end
+          if q and q > qmax then qmax = q end
+        end
+      end
+    end
+    local after = series and series.lastT or -math.huge
+    for _, pt in ipairs(tailOf(id)) do
+      if pt.t > after and pt.t >= v.axisStart then
+        v.tail[#v.tail + 1] = pt
+        if pt.p > 0 then values[#values + 1] = pt.p end
+      end
+    end
+    drawHead(id, e, values, rng)
+    -- legend and resolution
+    local r = v.rhythm
+    local legend = "|cffffd100günstigstes Angebot|r   |cffb0b0b0Menge (Balken)|r   |cffffffffR = Marktwert|r"
+    if #v.tail > 0 then legend = legend .. "   |cffd9f2ffseit dem Verlauf beobachtet|r" end
+    if r and type(r[1]) == "number" and type(r[2]) == "number" then
+      legend = legend .. string.format("   |cff5fd38dKauf bis / Kaufzeit %d–%d Uhr|r   |cff73adffZiel / Verkaufszeit %d–%d Uhr|r",
+        r[1], (r[1] + (ns.DayTrade.WINDOW_HOURS or 3)) % 24, r[2], (r[2] + (ns.DayTrade.WINDOW_HOURS or 3)) % 24)
+    end
+    ui.legend:SetText(legend)
+    ui.res:SetText(series and (series.hourFrom and ("1-h-Werte ab " .. stampFull(series.hourFrom) .. ", davor 2 h") or "2-h-Werte") or "")
+    drawAxis(v)
+    drawBands(v)
+    if #values == 0 then
+      ui.empty:SetText(not series and "Keine Verlaufsdaten für dieses Item"
+        or (zeros and ("Im Zeitraum (" .. rng.label .. ") nicht im Angebot") or ("Keine Verlaufsdaten im Zeitraum (" .. rng.label .. ")")))
+      ui.empty:Show()
+      ui.refLine:Hide()
+      ui.qty:SetText("")
+      finish()
+      return
+    end
+    ui.empty:Hide()
+    -- Price scale: outliers (Detail.ChartScale) are cut at the edge with a cap, R and the pool's
+    -- lines always fit; whole steps of 1 / 2 / 5 for the grid.
+    local cutLow, cutHigh = Detail.ChartScale(values)
+    local lo, hi
+    for _, p in ipairs(values) do
+      if not (cutLow and p < cutLow) and not (cutHigh and p > cutHigh) then
+        lo, hi = math.min(lo or p, p), math.max(hi or p, p)
+      end
+    end
+    lo, hi = lo or values[1], hi or values[1]
+    local limit, ask = r and r[3], r and r[4]
+    for _, ref in ipairs({ e.ref or 0, limit or 0, ask or 0 }) do
+      if ref > 0 then lo, hi = math.min(lo, ref), math.max(hi, ref) end
+    end
+    local range = hi - lo
+    if range <= 0 then range = math.max(1, hi * 0.2) end
+    local step = niceStep(range, 5)
+    local bottom = math.max(0, math.floor((lo - range * 0.05) / step) * step)
+    local top = math.ceil((hi + range * 0.05) / step) * step
+    if top <= bottom then top = bottom + step end
+    -- the quantity bars in the lowest fifth, prices above them
+    local barZone = math.floor(h * 0.2)
+    local pBottom, pTop = barZone + 8, h - 6
+    local function py(p)
+      p = math.max(bottom, math.min(top, p))
+      return pBottom + (p - bottom) / (top - bottom) * (pTop - pBottom)
+    end
+    v.py = py
+    -- grid and price labels
+    for k = 0, math.floor((top - bottom) / step + 0.5) do
+      local val = bottom + k * step
+      local yy = py(val)
+      local g = take("grid")
+      g:ClearAllPoints()
+      g:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 0, yy)
+      g:SetPoint("BOTTOMRIGHT", ui.plot, "BOTTOMRIGHT", 0, yy)
+      local fs = take("yLabel")
+      fs:ClearAllPoints()
+      fs:SetPoint("RIGHT", ui.plot, "BOTTOMLEFT", -6, yy)
+      fs:SetText(money(val))
+    end
+    -- quantity bars (own scale: the highest in the range fills the zone)
+    for _, i in ipairs(v.vis) do
+      local q = series.q[i]
+      if q and q > 0 and qmax > 0 then
+        local x0, x1 = math.max(0, X(series.t0[i])), math.min(w, X(series.t1[i]))
+        if x1 > x0 then
+          local bar = take("bar")
+          bar:ClearAllPoints()
+          bar:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", x0 + 0.5, 1)
+          bar:SetSize(math.max(1, x1 - x0 - 1), math.max(1, (barZone - 2) * q / qmax))
+        end
+      end
+    end
+    ui.qty:ClearAllPoints()
+    ui.qty:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 4, barZone + 1)
+    ui.qty:SetText(qmax > 0 and ("Menge, max " .. count(qmax) .. " Stück") or "")
+    -- price line: broken where no snapshot exists, a short dash for a lone slot; sold out as an
+    -- orange tick on the base line, cut outliers with a cap on the edge
+    local prev
+    for _, i in ipairs(v.vis) do
+      local p, t0, t1 = series.p[i], series.t0[i], series.t1[i]
+      local x = math.max(0, math.min(w, X((t0 + t1) / 2)))
+      if p and p > 0 then
+        local yy = py(p)
+        if prev and prev.t1 == t0 then
+          segment(prev.x, prev.y, x, yy, GOLD_RGB)
+        else
+          segment(x - 1.5, yy, x + 1.5, yy, GOLD_RGB)
+        end
+        if (cutHigh and p > cutHigh) or (cutLow and p < cutLow) then mark(x, yy, 4, OUT_RGB) end
+        prev = { t1 = t1, x = x, y = yy }
+      else
+        prev = nil
+        if p == 0 then
+          local m = mark(x, 2.5, 3, OUT_RGB, 0.9)
+          m:SetSize(math.max(1, math.min(w, X(t1)) - math.max(0, X(t0)) - 1), 3)
+        end
+      end
+    end
+    -- live tail: lighter points and line, from the curve's end on
+    local last = prev
+    for _, pt in ipairs(v.tail) do
+      local x = math.max(0, math.min(w, X(pt.t)))
+      pt.x = x
+      if pt.p > 0 then
+        local yy = py(pt.p)
+        if last then segment(last.x, last.y, x, yy, TAIL_RGB, 0.7) end
+        mark(x, yy, 4, TAIL_RGB)
+        last = { x = x, y = yy }
+      else
+        mark(x, 2.5, 4, OUT_RGB, 0.9)
+        last = nil
+      end
+    end
+    -- reference lines and their labels in the right margin
+    local labels = {}
+    if e.ref and e.ref > 0 then
+      local yy = py(e.ref)
+      ui.refLine:ClearAllPoints()
+      ui.refLine:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 0, yy)
+      ui.refLine:SetPoint("BOTTOMRIGHT", ui.plot, "BOTTOMRIGHT", 0, yy)
+      ui.refLine:Show()
+      labels[#labels + 1] = { y = yy, text = "R " .. money(e.ref), rgb = { 1, 1, 1 } }
+    else
+      ui.refLine:Hide()
+    end
+    if limit and limit > 0 then
+      dashed(py(limit), w, BUY_RGB)
+      labels[#labels + 1] = { y = py(limit), text = "Kauf " .. money(limit), rgb = BUY_RGB }
+    end
+    if ask and ask > 0 then
+      dashed(py(ask), w, SELL_RGB)
+      labels[#labels + 1] = { y = py(ask), text = "Ziel " .. money(ask), rgb = SELL_RGB }
+    end
+    -- the price now as a marker on the right edge
+    if e.now and e.now > 0 then
+      mark(w, py(e.now), 7, GOLD_RGB)
+      labels[#labels + 1] = { y = py(e.now), text = "jetzt " .. money(e.now), rgb = GOLD_RGB }
+    end
+    placeLabels(labels, h)
+    finish()
+    ui.view = v
+  end
+
+  -- Hover at x pixels from the plot's left edge (nil: mouse left): a live point within 6 px,
+  -- else the slot under the mouse; a line, a dot on the price and the game tooltip with time,
+  -- price and quantity. The tooltip is rebuilt only when the slot or point changes.
+  hover = function(x)
+    local v = ui and ui.view
+    if not (x and v and x >= 0 and x <= v.w) then
+      if ui then
+        ui.cursor:Hide()
+        ui.dot:Hide()
+        if v then v.hoverKey = nil end
+        if GameTooltip:GetOwner() == ui.plot then GameTooltip:Hide() end
+      end
+      return
+    end
+    local s, pt, slot = v.series, nil, nil
+    for k = #v.tail, 1, -1 do
+      local c = v.tail[k]
+      if c.x and math.abs(c.x - x) <= 6 then pt = c break end
+    end
+    local t = v.axisStart + x / v.w * v.span
+    if not pt and s then
+      local lo, hi = 1, #v.vis
+      while lo <= hi do
+        local mid = math.floor((lo + hi) / 2)
+        local i = v.vis[mid]
+        if t < s.t0[i] then hi = mid - 1 elseif t >= s.t1[i] then lo = mid + 1 else slot = i break end
+      end
+    end
+    local key = pt or slot or -math.floor(t / 3600)
+    if key == v.hoverKey then return end
+    v.hoverKey = key
+    local cx, p, q, title, extra
+    if pt then
+      cx, p, q = pt.x, pt.p, pt.q
+      title = stampFull(pt.t)
+      extra = "Quelle: " .. (SOURCES[pt.src] or "?")
+    elseif slot then
+      local t0, t1 = s.t0[slot], s.t1[slot]
+      cx = math.max(0, math.min(v.w, ((t0 + t1) / 2 - v.axisStart) / v.span * v.w))
+      p, q = s.p[slot], s.q[slot]
+      title = stampRange(t0, t1)
+      extra = (t1 - t0 > 3600) and "2-h-Wert" or nil
+    else
+      cx = x
+      local h0 = math.floor(t / 3600) * 3600
+      title = stampRange(h0, h0 + 3600)
+    end
+    ui.cursor:ClearAllPoints()
+    ui.cursor:SetPoint("TOPLEFT", ui.plot, "TOPLEFT", cx, 0)
+    ui.cursor:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", cx, 0)
+    ui.cursor:Show()
+    if p and p > 0 and v.py then
+      ui.dot:ClearAllPoints()
+      ui.dot:SetPoint("CENTER", ui.plot, "BOTTOMLEFT", cx, v.py(p))
+      ui.dot:Show()
+    else
+      ui.dot:Hide()
+    end
+    GameTooltip:SetOwner(ui.plot, "ANCHOR_NONE")
+    GameTooltip:ClearAllPoints()
+    if cx > v.w / 2 then
+      GameTooltip:SetPoint("TOPRIGHT", ui.plot, "TOPLEFT", cx - 12, -8)
+    else
+      GameTooltip:SetPoint("TOPLEFT", ui.plot, "TOPLEFT", cx + 12, -8)
+    end
+    GameTooltip:AddLine(title, 1, 1, 1)
+    if p and p > 0 then
+      GameTooltip:AddDoubleLine("Günstigstes", money(p), 1, 0.82, 0, 1, 1, 1)
+      local cmp = ns.Item.RefCompare(p, v.e)
+      if cmp then GameTooltip:AddLine(cmp, 0.6, 0.6, 0.62) end
+    elseif p == 0 then
+      GameTooltip:AddLine("nicht im Angebot", OUT_RGB[1], OUT_RGB[2], OUT_RGB[3])
+    else
+      GameTooltip:AddLine("keine Daten", 0.6, 0.6, 0.62)
+    end
+    if q and q > 0 then GameTooltip:AddDoubleLine("Menge", count(q) .. " Stück", 1, 0.82, 0, 1, 1, 1) end
+    local r = v.rhythm
+    if r and type(r[1]) == "number" then
+      local hr = tonumber(date("!%H", berlin(pt and pt.t or (slot and s.t0[slot]) or t)))
+      local len = ns.DayTrade.WINDOW_HOURS or 3
+      if (hr - r[1]) % 24 < len then GameTooltip:AddLine("Kaufzeit (Tageshandel)", BUY_RGB[1], BUY_RGB[2], BUY_RGB[3]) end
+      if (hr - r[2]) % 24 < len then GameTooltip:AddLine("Verkaufszeit (Tageshandel)", SELL_RGB[1], SELL_RGB[2], SELL_RGB[3]) end
+    end
+    if extra then GameTooltip:AddLine(extra, 0.6, 0.6, 0.62) end
+    GameTooltip:Show()
+  end
+
+  -- New observations come in bursts (a full scan records every item): one redraw a second at
+  -- most, and only when the item's price or its time moved.
+  local function soon()
+    if pending or not Big.IsShown() then return end
+    pending = true
+    C_Timer.After(1, function()
+      pending = false
+      if not Big.IsShown() then return end
+      local e = ns.Item.Get(shownID)
+      if e.dataT ~= ui.drawnT or e.now ~= ui.drawnNow then
+        ui.drawnT, ui.drawnNow = e.dataT, e.now
+        ns.Safe(draw)
+      end
+    end)
+  end
+
+  local function create()
+    win = ns.NativeWindow.New({ name = NAME, title = "Preisverlauf", icon = "Interface\\Icons\\INV_Misc_Coin_02",
+      width = W, height = H })
+    local f = win.frame
+    f:SetFrameStrata("HIGH") -- like the market data window it opens from, else it would hide behind it
+    local pos = ns.db and ns.db.itemDetail and ns.db.itemDetail.bigPos
+    if pos then
+      f:ClearAllPoints()
+      f:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+    end
+    f:HookScript("OnDragStop", function(fr)
+      local point, _, relPoint, x, yy = fr:GetPoint()
+      if point and ns.db then
+        ns.db.itemDetail = ns.db.itemDetail or {}
+        ns.db.itemDetail.bigPos = { point, relPoint, x, yy }
+      end
+    end)
+    -- every 30 s while shown: the age in the head, the "jetzt" edge and the windows move on
+    f:HookScript("OnShow", function()
+      if not ticker and C_Timer and C_Timer.NewTicker then
+        ticker = C_Timer.NewTicker(30, function() ns.Safe(draw) end)
+      end
+    end)
+    f:HookScript("OnHide", function()
+      if ticker then ticker:Cancel(); ticker = nil end
+      if hover then hover(nil) end
+      ns.Safe(Detail.UpdateDetailsButton)
+    end)
+    win:AddTab({ key = "chart", title = "Preisverlauf", hidden = true, build = buildPage })
+    -- new data of the item: own searches and scans (Observations.lua), other players' over the
+    -- addon channel (LiveChannel.lua), the end of an own full scan (AuctionScan.lua)
+    if ns.Obs and ns.Obs.OnRecord then
+      ns.Obs.OnRecord(function(itemID) if itemID == shownID then soon() end end)
+    end
+    if ns.Live and ns.Live.OnUpdate then ns.Live.OnUpdate(soon) end
+    if ns.AuctionScan and ns.AuctionScan.OnDone then ns.AuctionScan.OnDone(soon) end
+    ns.AuctionHouse.OnChange(function() if Big.IsShown() then ns.Safe(draw) end end)
+    ns.AuctionHouse.OnViewChange(function() if Big.IsShown() then ns.Safe(draw) end end)
+    if ns.On then
+      ns.On("GET_ITEM_INFO_RECEIVED", function(_, got) if got == shownID and Big.IsShown() then ns.Safe(draw) end end)
+    end
+  end
+
+  function Big.IsShown() return win ~= nil and win.frame:IsShown() end
+  function Big.Shows(id) return Big.IsShown() and id ~= nil and shownID == id end
+  function Big.ItemID() return Big.IsShown() and shownID or nil end
+
+  function Big.Show(id)
+    if not id then return end
+    if not win then create() end
+    shownID = id
+    win:Show() -- builds the page on the first show
+    draw()
+    updateDetailsButton()
+  end
+
+  function Big.Hide()
+    if win then win.frame:Hide() end
+  end
+
+  function Big.Toggle(id)
+    if Big.Shows(id) then Big.Hide() else Big.Show(id) end
+  end
+
+  -- The market data window shows another item (or the same with new data): redraw on it.
+  function Big.Follow(id)
+    if not (id and Big.IsShown()) then return end
+    shownID = id
+    draw()
+    updateDetailsButton()
+  end
+
+  function Big.Refresh() if Big.IsShown() then draw() end end
 end
 
 -- Content ------------------------------------------------------------------------------
@@ -968,6 +1827,8 @@ render = function()
   if frame.house then frame.house.Update() end
   local house = frame.house and frame.house.Selected() or nil
   ns.AuctionHouse.WithView(house, renderBody)
+  -- the big chart follows the item shown here (and redraws with its new data)
+  if Big.Follow then ns.Safe(Big.Follow, itemID) end
 end
 
 -- Window ----------------------------------------------------------------------------
