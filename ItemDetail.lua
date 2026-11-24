@@ -1344,6 +1344,7 @@ do
     local plan = Fish.Plan(shownID)
     local K = Fish.BaitPrice(shownID, plan)
     if not K then return Fish.Refresh() end
+    Fish.QueryOwned() -- at most every 3 s: the bait state from the game's own list
     if Fish.cycle == "posting" then
       return Fish.Refresh() -- the bait is on its way: no ask in between (it would hang in the throttle)
     elseif Fish.NeedBait(shownID) then
@@ -1391,8 +1392,38 @@ do
     db.out[id] = keep
     return keep
   end
-  -- a new bait only when none of ours is out (and baiting is on)
-  function Fish.NeedBait(id) return not Fish.noBait and #Fish.BaitsOut(id) == 0 end
+  -- Our running single-unit auctions of the item from the game's own list (QueryOwnedAuctions,
+  -- the "Auktionen" tab's data) - the truth about baits out; nil while that list is unknown or
+  -- older than 30 s (then the count of created/sold messages stands in).
+  function Fish.OwnedBaits(id)
+    local api = C_AuctionHouse
+    if not (Fish.ownedT and GetTime() - Fish.ownedT < 30 and api.GetNumOwnedAuctions and api.GetOwnedAuctionInfo) then return nil end
+    local active = Enum and Enum.AuctionStatus and Enum.AuctionStatus.Active or 0
+    local n = 0
+    for i = 1, api.GetNumOwnedAuctions() or 0 do
+      local ok, a = pcall(api.GetOwnedAuctionInfo, i)
+      if ok and a and a.itemKey and a.itemKey.itemID == id and (a.quantity or 1) == 1 and (a.status or 0) == active then
+        n = n + 1
+      end
+    end
+    return n
+  end
+  function Fish.QueryOwned()
+    local api = C_AuctionHouse
+    if api.QueryOwnedAuctions and not (Fish.ownedAsked and GetTime() - Fish.ownedAsked < 3) then
+      Fish.ownedAsked = GetTime()
+      local order = Enum and Enum.AuctionHouseSortOrder and Enum.AuctionHouseSortOrder.Name or 0
+      pcall(api.QueryOwnedAuctions, { { sortOrder = order, reverseSort = false } })
+    end
+  end
+  -- a new bait only when none of ours is out (and baiting is on): from the game's list when
+  -- known, else from the created/sold messages
+  function Fish.NeedBait(id)
+    if Fish.noBait then return false end
+    local owned = Fish.OwnedBaits(id)
+    if owned ~= nil then return owned == 0 end
+    return #Fish.BaitsOut(id) == 0
+  end
 
   -- The bait price K: from the plan (vendor + 25 %, under the cheapest foreign offer and the
   -- catch limit), else the last one known for the item, else vendor + 25 %.
@@ -1762,6 +1793,11 @@ do
         Fish.Trace("bait_sold", #out)
         ns.Safe(Fish.Refresh)
       end
+    end)
+    ns.On("OWNED_AUCTIONS_UPDATED", function()
+      Fish.ownedT = GetTime()
+      Fish.Trace("owned", Fish.OwnedBaits(shownID or 0))
+      ns.Safe(Fish.Refresh)
     end)
     ns.On("AUCTION_HOUSE_AUCTION_CREATED", function()
       if Fish.cycle == "posting" then
