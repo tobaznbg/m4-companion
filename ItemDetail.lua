@@ -1145,20 +1145,16 @@ do
   local function ahOpen() return ns.AHSearch and ns.AHSearch.IsOpen() or false end
   local function live() return Big.IsShown() and shownID ~= nil and rangeDef().key == "live" end
 
-  -- Fishing mode (switch beside the buttons): while on, at the auction house and in the live
-  -- view, every other auction house query of the addon stands still - the full scan, the
-  -- sniper, the 10 s refresh of the auction lists, single searches of other items and the
-  -- live channel's sending - so the one search a second of the fished item never waits.
-  -- Session only (off after a reload).
-  function ns.FishMode() return Fish.mode and live() and ahOpen() or false end
+  -- Fishing mode: while the live view is shown at the auction house (the fish button is there),
+  -- every other auction house query of the addon stands still - the full scan, the sniper, the
+  -- 10 s refresh of the auction lists, single searches of other items and the live channel's
+  -- sending - so the one search a second of the fished item never waits.
+  function ns.FishMode() return live() and ahOpen() or false end
   function ns.FishItem() return ns.FishMode() and shownID or nil end
-  function Fish.SetMode(on)
-    Fish.mode = on and true or false
-    if Fish.mode then
-      if ns.Sniper and ns.Sniper.IsRunning and ns.Sniper.IsRunning() then ns.Safe(ns.Sniper.Click) end
-      if ns.AuctionScan and ns.AuctionScan.Abort then ns.Safe(ns.AuctionScan.Abort) end
-    end
-    ns.Safe(Fish.Refresh)
+  -- entering the fishing mode stops what runs: the sniper and a full scan
+  function Fish.EnterMode()
+    if ns.Sniper and ns.Sniper.IsRunning and ns.Sniper.IsRunning() then ns.Safe(ns.Sniper.Click) end
+    if ns.AuctionScan and ns.AuctionScan.Abort then ns.Safe(ns.AuctionScan.Abort) end
   end
 
   -- A unit of the item in the carried bags: the location of an unlocked stack and the count.
@@ -1256,8 +1252,13 @@ do
       end
       return Fish.Refresh()
     end
+    -- one button, the next step: a catch is asked for (its price checked), else a bait is set
     local plan = Fish.Plan(shownID)
-    if plan and plan.n > 0 then Fish.Ask(plan, false) end
+    if plan and plan.n > 0 then
+      Fish.Ask(plan, false)
+    elseif plan and plan.bait and not plan.baitLies and not (Fish.baitSent and GetTime() - Fish.baitSent < 5) then
+      ns.Safe(Fish.Bait)
+    end
     Fish.Refresh()
   end
 
@@ -1323,11 +1324,10 @@ do
     if not (ui and ui.fishLine) then return end
     local on = live()
     ui.fishLine:SetShown(on)
-    if ui.mode then
-      ui.mode:SetShown(on)
-      ui.mode:SetText(Fish.mode and "|cff5fd38dFischmodus: an|r" or "Fischmodus: aus")
-    end
-    ui.bait:SetShown(on)
+    -- the mode starts with the view: stop what runs once
+    if on and ahOpen() and not Fish.modeWas then Fish.EnterMode() end
+    Fish.modeWas = on and ahOpen()
+    ui.bait:SetShown(false) -- one button does it all (Fish.Click)
     ui.fishBtn:SetShown(on)
     local p = Fish.pending
     if p and p.state ~= "buying" and (not on or p.itemID ~= shownID) then return Fish.Drop(true) end
@@ -1410,9 +1410,21 @@ do
         Fish.autoBlocked and "Klick fragt den Preis an, der zweite Klick kauft" or "Klick fragt den Preis an")
       ui.fishBtn.blink = bite
     elseif plan and plan.catch > 0 then
-      look(ui.fishBtn, false, false, note or "Fischen: Tagesbudget erreicht", "Rechtsklick auf die Zeile darüber: Budget")
+      look(ui.fishBtn, false, false, note or "Tagesbudget erreicht", "Rechtsklick auf die Zeile darüber: Budget")
+    elseif not (plan and plan.bait) then
+      look(ui.fishBtn, false, false, note or "noch keine Fanggrenze", nil)
+    elseif lies then
+      look(ui.fishBtn, false, false, note or ("Köder liegt (" .. money(plan.bait) .. ") – warte auf Biss"),
+        "Beißt jemand an, zeigt der Knopf den Kauf.")
+    elseif Fish.baitSent and now - Fish.baitSent < 5 then
+      look(ui.fishBtn, false, false, "Köder wird eingestellt …", nil)
+    elseif have == 0 then
+      look(ui.fishBtn, false, false, "kein Stück für den Köder in den Taschen", nil)
+    elseif not loc then
+      look(ui.fishBtn, false, false, "Köder-Stück gerade gesperrt", nil)
     else
-      look(ui.fishBtn, false, false, note or "Fischen: — kein Fang —", nil)
+      look(ui.fishBtn, true, Fish.baitFlash ~= nil and now < Fish.baitFlash, "Köder setzen (" .. money(plan.bait) .. ")",
+        "1 Stück zu " .. money(plan.bait) .. " für 2 h einstellen (Gebühr etwa " .. money(plan.dep or 0) .. ")")
     end
   end
 
@@ -1662,9 +1674,7 @@ do
     ui.fishLine = fl
     ui.bait = button(page, "Köder setzen", 230, function() ns.Safe(Fish.Bait) end)
     ui.bait:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT, 6)
-    -- the fishing mode switch between the two buttons
-    ui.mode = button(page, "Fischmodus: aus", 130, function() Fish.SetMode(not Fish.mode) end)
-    ui.mode:SetPoint("LEFT", ui.bait, "RIGHT", 8, 0)
+
     -- the fish button has a global name: a macro "/click M4CompanionFishButton" puts it on a key
     local ok, fb = pcall(CreateFrame, "Button", "M4CompanionFishButton", page, "UIPanelButtonTemplate")
     if ok and fb then
