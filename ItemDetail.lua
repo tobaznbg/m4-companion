@@ -1082,7 +1082,9 @@ do
     local unit = hstep * 3600
     -- a short range (live view): ticks every 10 minutes (5 under half an hour) with the time
     local short = v.span <= 3 * 3600
-    if short then unit = v.span <= 1800 and 300 or (v.span <= 3600 and 600 or 1800) end
+    if short then
+      unit = v.span <= 300 and 60 or v.span <= 600 and 120 or v.span <= 1800 and 300 or v.span <= 3600 and 600 or 1800
+    end
     local bStart, bEnd = berlin(v.axisStart), berlin(v.axisEnd)
     local firstDay
     local b = math.ceil(bStart / unit) * unit
@@ -1242,6 +1244,15 @@ do
     local series = Detail.FineSeries(id)
     local axisEnd = time()
     local span = rng.span or (series and series.first and math.max(axisEnd - series.first, 6 * 3600)) or 7 * 86400
+    if rng.key == "live" then
+      -- live: from the first fine point of the last 20 minutes (at least 2 minutes), so the
+      -- points fill the width instead of sticking to the right edge
+      local first
+      for _, pt in ipairs(tailOf(id)) do
+        if pt.t >= axisEnd - rng.span and (not first or pt.t < first) then first = pt.t end
+      end
+      if first then span = math.max(120, math.min(rng.span, axisEnd - first + 15)) end
+    end
     if rng.today then
       -- today: from midnight (the PC's clock = Berlin), at least the last hour
       local d = date("*t", axisEnd)
