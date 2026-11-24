@@ -47,13 +47,16 @@ local function plan(s, capital)
   return qty, cost, qty * net - cost, true
 end
 
--- "Cloud 12:22 · Scan 12:35 · Spieler 12:40", each colored by its age.
+-- "Cloud 34m · Scan 21m · Spieler 3m": the age of each source, colored by it.
 local function freshness()
   local function part(label, t)
     if not t then return MUTED .. label .. " –|r" end
     local age = time() - t
     local c = age < 1200 and GREEN or age < 4200 and GOLD or RED
-    return c .. label .. " " .. date("%H:%M", t) .. "|r"
+    -- the age, short: "jetzt", "10m", "1h", "2d"
+    local text = age < 60 and "jetzt" or age < 3600 and string.format("%dm", math.floor(age / 60))
+      or age < 86400 and string.format("%dh", math.floor(age / 3600)) or string.format("%dd", math.floor(age / 86400))
+    return c .. label .. " " .. text .. "|r"
   end
   local AH = ns.AuctionHouse
   local data, id = AH.CloudData()
@@ -130,11 +133,11 @@ local function refresh()
     end
     table.sort(buys, function(a, b) return a.profit > b.profit end)
     add({ head = string.format("Jetzt kaufen  %s(Kapital %s)|r", MUTED, money(CAPITAL)) })
-    if #buys == 0 then add({ text = MUTED .. "nichts unter der Kaufgrenze|r" }) end
+    if #buys == 0 then add({ text = MUTED .. "–|r" }) end
     for i = 1, math.min(#buys, MAX_LINES) do
       local b = buys[i]
       add({ itemID = b.s.itemID, text = ns.ItemName(b.s.itemID) or ("Item " .. b.s.itemID),
-        right = string.format("%d× bis %s  %s%s+%s|r", b.qty, money(b.s.limit), GREEN, b.approx and "~" or "", money(b.profit)),
+        right = string.format("%s%s+%s|r", GREEN, b.approx and "~" or "", money(b.profit)),
         tip = string.format("Kaufen: %d Stück für %s (Grenze %s je Stück).\nEinstellen %s zu %s je Stück: erwartet +%s nach Gebühr und Einstellgebühr.",
           b.qty, money(b.cost), money(b.s.limit), string.format("%d–%d Uhr", b.s.sellHour, (b.s.sellHour + 3) % 24),
           money(b.s.ask), money(b.profit)) })
@@ -147,7 +150,7 @@ local function refresh()
     end
     table.sort(sells, function(a, b) return a.post * a.held > b.post * b.held end)
     add({ head = "Jetzt einstellen", gap = true })
-    if #sells == 0 then add({ text = MUTED .. "nichts, das jetzt lohnt|r" }) end
+    if #sells == 0 then add({ text = MUTED .. "–|r" }) end
     for i = 1, math.min(#sells, MAX_LINES) do
       local s = sells[i]
       add({ itemID = s.itemID, text = ns.ItemName(s.itemID) or ("Item " .. s.itemID),
