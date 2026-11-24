@@ -1346,7 +1346,7 @@ do
     if not K then return Fish.Refresh() end
     if Fish.cycle == "posting" then
       return Fish.Refresh() -- the bait is on its way: no ask in between (it would hang in the throttle)
-    elseif (Fish.cycle or "bait") == "bait" and not Fish.noBait then
+    elseif Fish.NeedBait(shownID) then
       ns.Safe(Fish.Bait, K)
       if Fish.baitSent and GetTime() - Fish.baitSent < 0.5 then
         -- step 2 only once the game confirmed the auction (AUCTION_HOUSE_AUCTION_CREATED), at
@@ -1354,7 +1354,12 @@ do
         Fish.cycle = "posting"
         local sent = Fish.baitSent
         C_Timer.After(5, function()
-          if Fish.cycle == "posting" and Fish.baitSent == sent then Fish.cycle = "check"; ns.Safe(Fish.Refresh) end
+          if Fish.cycle == "posting" and Fish.baitSent == sent then
+            local out = Fish.BaitsOut(shownID)
+            out[#out + 1] = time() -- no confirmation seen: count it as out anyway (no second bait)
+            Fish.cycle = "check"
+            ns.Safe(Fish.Refresh)
+          end
         end)
       end
     else
@@ -1373,6 +1378,21 @@ do
     end
     Fish.Refresh()
   end
+
+  -- Our baits out in the auction house (the search does not show them): one per confirmed
+  -- post (AUCTION_HOUSE_AUCTION_CREATED), gone with the game's "sold" message for the item
+  -- (ERR_AUCTION_SOLD_S) or after its 2 h. Saved: ns.db.fish.out[itemID] = { t, … }.
+  function Fish.BaitsOut(id)
+    local db = Fish.DB()
+    db.out = db.out or {}
+    local list = db.out[id] or {}
+    local keep, now = {}, time()
+    for _, t in ipairs(list) do if now - t < 2 * 3600 then keep[#keep + 1] = t end end
+    db.out[id] = keep
+    return keep
+  end
+  -- a new bait only when none of ours is out (and baiting is on)
+  function Fish.NeedBait(id) return not Fish.noBait and #Fish.BaitsOut(id) == 0 end
 
   -- The bait price K: from the plan (vendor + 25 %, under the cheapest foreign offer and the
   -- catch limit), else the last one known for the item, else vendor + 25 %.
@@ -1556,7 +1576,7 @@ do
         look(ui.fishBtn, false, false, note or "kein Köderpreis (Händlerpreis unbekannt)", nil)
       elseif Fish.cycle == "posting" then
         look(ui.fishBtn, false, false, "1 Köder wird eingestellt …", nil)
-      elseif (Fish.cycle or "bait") == "bait" and not Fish.noBait then
+      elseif Fish.NeedBait(id) then
         if have == 0 then
           look(ui.fishBtn, false, false, "1 Köder: kein Stück in den Taschen", nil)
         elseif not loc then
@@ -1565,7 +1585,8 @@ do
           look(ui.fishBtn, true, false, "1 Köder setzen (" .. money(K) .. ")", nil)
         end
       else
-        look(ui.fishBtn, true, false, note or ("2 Preis prüfen (bis " .. money(K) .. ")"), nil)
+        look(ui.fishBtn, true, false, note or ("2 Preis prüfen (bis " .. money(K) .. ")"
+          .. (#Fish.BaitsOut(id) > 0 and (" · Köder liegt") or "")), nil)
       end
     end
   end
@@ -1729,8 +1750,23 @@ do
       if p and p.state == "asking" then Fish.Drop(false, nil, true) end -- the offer is gone already
     end)
     ns.On("COMMODITY_PURCHASE_SUCCEEDED", function() Fish.cycle = "bait" end)
+    ns.On("CHAT_MSG_SYSTEM", function(_, msg)
+      if not (shownID and ERR_AUCTION_SOLD_S and type(msg) == "string") then return end
+      local name = ns.ItemName(shownID)
+      if name and msg == ERR_AUCTION_SOLD_S:format(name) then
+        local out = Fish.BaitsOut(shownID)
+        if #out > 0 then table.remove(out, 1) end
+        Fish.Trace("bait_sold", #out)
+        ns.Safe(Fish.Refresh)
+      end
+    end)
     ns.On("AUCTION_HOUSE_AUCTION_CREATED", function()
-      if Fish.cycle == "posting" then Fish.cycle = "check"; ns.Safe(Fish.Refresh) end
+      if Fish.cycle == "posting" then
+        local out = Fish.BaitsOut(shownID)
+        out[#out + 1] = time()
+        Fish.cycle = "check"
+        ns.Safe(Fish.Refresh)
+      end
       Fish.Trace("auction_created")
     end)
     ns.On("COMMODITY_PURCHASE_FAILED", function() Fish.cycle = "bait" end)
