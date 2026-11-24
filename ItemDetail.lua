@@ -1613,8 +1613,22 @@ do
       Fish.stat.quotes = Fish.stat.quotes + 1
       Fish.stat.lastQuote = string.format("%s für %d (Plan %s)", total and money(total) or "?", p.n, money(p.sum))
       if p.blind then
-        -- a probe: cheap enough -> confirm on the next click, else dropped without a word
-        if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget then
+        -- a probe: cheap enough -> confirm on the next click, else dropped without a word. The
+        -- game sells our own bait too: a probe at or above the price of a bait of ours still in
+        -- the auction house would buy that bait back (a loss of the cut, and the next click sets
+        -- the next bait) - only a price under every bait of ours counts.
+        local ownMin
+        for _, e in ipairs(Fish.DB().log) do
+          if e.k == "bait" and e.i == p.itemID and not e.gone and (not ownMin or e.p < ownMin) then ownMin = e.p end
+        end
+        if Fish.rows and Fish.rows.id == p.itemID then
+          for _, r in ipairs(Fish.rows.list or {}) do
+            if (r.own or 0) > 0 and (not ownMin or r.unit < ownMin) then ownMin = r.unit end
+          end
+        end
+        local unitAvg = total and p.n > 0 and total / p.n or nil
+        if not total or total > p.n * p.limit or Fish.DB().spent + total > Fish.Cfg(p.itemID).budget
+            or (ownMin and unitAvg and unitAvg >= ownMin) then
           Fish.stat.probes = (Fish.stat.probes or 0) + 1
           Fish.pending = nil
           if C_AuctionHouse.CancelCommoditiesPurchase then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
