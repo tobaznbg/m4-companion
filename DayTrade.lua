@@ -138,6 +138,8 @@ local function ownCost(itemID)
   if c then return c[1], c[2] end
 end
 function Trade.InvalidateOwn() ownCache = {} end
+-- The cached own cost per unit (also for items outside the pool, e.g. the overlay's watch list).
+Trade.OwnCost = ownCost
 
 -- The state of one pool item now: { phase = "buy"|"sell"|"wait", text, color, … }.
 local function state(itemID, r)

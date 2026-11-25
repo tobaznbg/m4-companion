@@ -32,6 +32,7 @@ local GREEN, ORANGE = "|cff5fd38d", "|cffffb547"
 
 local frame, body, scroll, itemID
 local recipeButton -- "Im Beruf zeigen" under the crafting / recipe lines
+local watchButton -- "Beobachten" / "Entfernen" at the very bottom (ns.Watch, the overlay's list)
 local origin   -- "sniper" when opened from the sniper list at the auction house
 local docked   -- anchor frame while docked at the auction house, nil as a window of its own
 local lines, sections = {}, {}
@@ -841,7 +842,7 @@ end
 do
   local NAME = "M4CompanionPriceChart"
   local W, H = 900, 560
-  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 74, 34 -- plot margins in the page
+  local LEFT, RIGHT, TOP, BOTTOM = 70, 124, 74, 34 -- plot margins in the page (right: the labels, "jetzt … +12 %")
   -- the live view's bottom margin: the bait and fish line and buttons go under the time axis
   local BOTTOM_LIVE = 100
   local RANGES = {
@@ -853,6 +854,8 @@ do
   }
   local BUY_RGB, SELL_RGB = { 0.37, 0.83, 0.55 }, { 0.45, 0.68, 1 }
   local OUT_RGB, TAIL_RGB = { 1, 0.71, 0.28 }, { 0.85, 0.95, 1 }
+  local USUAL_RGB = { 0.78, 0.62, 1 } -- the usual price at this hour of the day
+  local OWN_RGB = { 1, 0.45, 0.75 } -- our own running auctions
   local SOURCES = { cloud = "Cloud-Snapshot", scan = "eigener Vollscan", search = "eigene Suche",
     players = "andere Spieler (Cloud)", live = "andere Spieler (live)" }
   local TAIL_MAX = 1500 -- fine points kept per item and house (only changes: a busy day fits)
@@ -2347,6 +2350,26 @@ do
         if pt.q and pt.q > 0 and (not qmin or pt.q < qmin) then qmin = pt.q end
       end
     end
+    -- the usual quantity: median of the hourly quantities of the last 7 days (whatever range is
+    -- shown), drawn as a dotted line in the bar zone - more or less on offer than usual
+    local qMed
+    if series then
+      local qs, from = {}, time() - 7 * 86400
+      for i = 1, #series.t0 do
+        local q = series.q[i]
+        if q and q > 0 and series.t1[i] > from then qs[#qs + 1] = q end
+      end
+      if #qs >= 6 then
+        table.sort(qs)
+        local n = #qs
+        qMed = n % 2 == 1 and qs[(n + 1) / 2] or math.floor((qs[n / 2] + qs[n / 2 + 1]) / 2 + 0.5)
+      end
+    end
+    if qMed and qmax > 0 then
+      -- the scale reaches it, so the bars stand against it
+      qmax = math.max(qmax, qMed)
+      qmin = math.min(qmin or qMed, qMed)
+    end
     drawHead(id, e, values, rng)
     ui.live:SetText(liveText(id))
     Fish.Refresh()
@@ -2384,6 +2407,45 @@ do
     lo, hi = lo or values[1], hi or values[1]
     -- live: catch limit and bait in the scale, the gap between them and the market is the point
     if plan and plan.limit then lo, hi = math.min(lo, plan.bait), math.max(hi, plan.limit) end
+    -- How the price usually behaves: per hour of the day (local time) the median of the hourly
+    -- cheapest offers of the 7 days before today (at least 3 days per hour). Drawn as a violet
+    -- step line; "jetzt" shows the delta to the usual price of this hour.
+    local usual = {}
+    if series then
+      local today0 = time({ year = tonumber(date("%Y")), month = tonumber(date("%m")), day = tonumber(date("%d")), hour = 0 })
+      local from, byHour = today0 - 7 * 86400, {}
+      for i = 1, #series.t0 do
+        local p, t0, t1 = series.p[i], series.t0[i], series.t1[i]
+        -- a slot counts for every hour it covers (1 h slots, or 2 h slots where the history
+        -- has no hourly values)
+        if p and p > 0 and t0 >= from and t0 < today0 and t1 - t0 <= 2 * 3600 then
+          local t = t0
+          while t < t1 do
+            local hr = tonumber(date("%H", t))
+            byHour[hr] = byHour[hr] or {}
+            table.insert(byHour[hr], p)
+            t = t + 3600
+          end
+        end
+      end
+      for hr, ps in pairs(byHour) do
+        if #ps >= 3 then
+          table.sort(ps)
+          local n = #ps
+          usual[hr] = n % 2 == 1 and ps[(n + 1) / 2] or math.floor((ps[n / 2] + ps[n / 2 + 1]) / 2 + 0.5)
+        end
+      end
+    end
+    local function usualAt(t) return usual[tonumber(date("%H", t))] end
+    -- the usual prices over the axis in the scale (the comparison is the point)
+    do
+      local t = v.axisStart - v.axisStart % 3600
+      while t < axisEnd do
+        local u = usualAt(t)
+        if u then lo, hi = math.min(lo, u), math.max(hi, u) end
+        t = t + 3600
+      end
+    end
     local limit, ask = r and r[3], r and r[4]
     -- the scale follows the prices of the range only (else far reference lines flatten the
     -- curve); R, buy limit and target outside it become arrows on the edge
@@ -2449,9 +2511,12 @@ do
         bar:SetSize(math.max(2, x1 - x0 - 1), qh(pt.q))
       end
     end
+    -- the usual quantity (median 7 days): a dotted line through the bars
+    if qMed and qmax > 0 then dashed(1 + qh(qMed), w, { 1, 1, 1 }, 2, 5) end
     ui.qty:ClearAllPoints()
     ui.qty:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 4, barZone + 1)
-    ui.qty:SetText(qmax > 0 and ("Menge " .. count(qmin or qmax) .. "–" .. count(qmax) .. " Stück") or "")
+    ui.qty:SetText(qmax > 0 and ("Menge " .. count(qmin or qmax) .. "–" .. count(qmax) .. " Stück"
+      .. (qMed and ("   |cffffffff··· üblich " .. count(qMed) .. "|r |cff999999(Median 7 Tage)|r") or "")) or "")
     -- the resolution hint beside it, inside the plot (the head line is full)
     ui.res:ClearAllPoints()
     ui.res:SetPoint("LEFT", ui.qty, "RIGHT", 16, 0)
@@ -2478,21 +2543,69 @@ do
         end
       end
     end
-    -- live tail: lighter points and line, from the curve's end on
+    -- the usual price per hour of the day: a violet step line
+    do
+      local t = v.axisStart - v.axisStart % 3600
+      local prevU
+      while t < axisEnd do
+        local u = usualAt(t)
+        local x0, x1 = math.max(0, X(t)), math.min(w, X(t + 3600))
+        if u and x1 > x0 then
+          local yy = py(u)
+          if prevU then segment(x0, prevU, x0, yy, USUAL_RGB, 0.45) end
+          segment(x0, yy, x1, yy, USUAL_RGB, 0.6)
+          prevU = yy
+        else
+          prevU = nil
+        end
+        t = t + 3600
+      end
+    end
+    -- live tail: lighter points and line, from the curve's end on. Outside the live view many
+    -- points fall on a few pixels (a search every second): there one point per TAIL_PX pixels,
+    -- the median price of its points, without markers - else the line zigzags in a stripe.
     local last = prev
+    local TAIL_PX = 4
+    local bucketed = rng.key ~= "live"
+    local bucket
+    local function flush()
+      if not bucket then return end
+      local ps = bucket.ps
+      table.sort(ps)
+      local n = #ps
+      local p = n % 2 == 1 and ps[(n + 1) / 2] or (ps[n / 2] + ps[n / 2 + 1]) / 2
+      local yy = py(p)
+      if last then segment(last.x, last.y, bucket.x, yy, TAIL_RGB, 0.7) end
+      last = { x = bucket.x, y = yy }
+      bucket = nil
+    end
+    -- the curve's last point sits in the middle of its slot: live points left of it are drawn
+    -- by the curve already (a line back to them would run backwards)
+    local curveEnd = prev and prev.x or -1
     for _, pt in ipairs(v.tail) do
       local x = math.max(0, math.min(w, X(pt.t)))
       pt.x = x
-      if pt.p > 0 then
-        local yy = py(pt.p)
-        if last then segment(last.x, last.y, x, yy, TAIL_RGB, 0.7) end
-        mark(x, yy, 4, TAIL_RGB)
-        last = { x = x, y = yy }
+      if x < curveEnd then
+        -- covered by the curve
+      elseif pt.p > 0 then
+        if bucketed then
+          local slot = math.floor(x / TAIL_PX)
+          if bucket and bucket.slot ~= slot then flush() end
+          bucket = bucket or { slot = slot, x = (slot + 0.5) * TAIL_PX, ps = {} }
+          bucket.ps[#bucket.ps + 1] = pt.p
+        else
+          local yy = py(pt.p)
+          if last then segment(last.x, last.y, x, yy, TAIL_RGB, 0.7) end
+          mark(x, yy, 4, TAIL_RGB)
+          last = { x = x, y = yy }
+        end
       else
+        flush()
         mark(x, 2.5, 4, OUT_RGB, 0.9)
         last = nil
       end
     end
+    flush()
     -- reference lines and their labels in the right margin
     local labels = {}
     -- a reference outside the scale: no line, its label on the edge with an arrow
@@ -2520,6 +2633,23 @@ do
       if not arrow then dashed(py(ask), w, SELL_RGB) end
       labels[#labels + 1] = { y = py(ask), text = "Ziel " .. money(ask) .. (arrow or ""), rgb = SELL_RGB }
     end
+    -- our own running auctions of the item (every character of the household, from the game's
+    -- own auction list, MyAuctions.lua): one pink dashed line per price with the units
+    local mine = {}
+    for _, key in ipairs(ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}) do
+      local o = ns.db.owned and ns.db.owned[key]
+      for _, a in ipairs(o and o.list or {}) do
+        local running = not (a.tl and o.t and o.t + a.tl < time())
+        if a.i == id and not a.s and a.u and a.u > 0 and running then
+          mine[a.u] = (mine[a.u] or 0) + (a.q or 1)
+        end
+      end
+    end
+    for price, q in pairs(mine) do
+      local arrow = edge(price)
+      if not arrow then dashed(py(price), w, OWN_RGB, 8, 12) end
+      labels[#labels + 1] = { y = py(price), text = string.format("Meine %d× %s", q, money(price)) .. (arrow or ""), rgb = OWN_RGB }
+    end
     -- bait and fish: catch limit green dashed, bait blue dotted
     if plan and plan.limit then
       dashed(py(plan.limit), w, BUY_RGB)
@@ -2528,9 +2658,19 @@ do
       labels[#labels + 1] = { y = py(plan.bait), text = "Köder " .. money(plan.bait), rgb = SELL_RGB }
     end
     -- the price now as a marker on the right edge
+    -- the usual price of this hour, and the delta of the price now to it
+    local uNow = usualAt(time())
+    if uNow then
+      labels[#labels + 1] = { y = py(uNow), text = "üblich " .. money(uNow), rgb = USUAL_RGB }
+    end
     if e.now and e.now > 0 then
       mark(w, py(e.now), 7, GOLD_RGB)
-      labels[#labels + 1] = { y = py(e.now), text = "jetzt " .. money(e.now), rgb = GOLD_RGB }
+      local delta = ""
+      if uNow and uNow > 0 then
+        local d = e.now / uNow - 1
+        delta = string.format(" %s%+d %%|r", d >= 0 and "|cff5fd38d" or "|cffff6b6b", math.floor(d * 100 + 0.5))
+      end
+      labels[#labels + 1] = { y = py(e.now), text = "jetzt " .. money(e.now) .. delta, rgb = GOLD_RGB }
     end
     placeLabels(labels, h)
     finish()
@@ -3035,6 +3175,32 @@ local function renderBody()
       y = y + 22
     else
       recipeButton:Hide()
+    end
+  end
+
+  -- "Beobachten" / "Entfernen": the item on the overlay's watch list (a click there opens the
+  -- big chart), at the very bottom
+  if not watchButton then
+    local ok, b = pcall(CreateFrame, "Button", nil, body, "UIPanelButtonTemplate")
+    if ok and b then
+      b:SetSize(130, 20)
+      b:SetScript("OnClick", function()
+        if itemID and ns.Watch then ns.Watch.Toggle(itemID) end
+        render()
+      end)
+      watchButton = b
+    end
+  end
+  if watchButton then
+    watchButton:ClearAllPoints()
+    if itemID and ns.Watch then
+      watchButton:SetText(ns.Watch.Has(itemID) and "Entfernen" or "Beobachten")
+      y = y + 8
+      watchButton:SetPoint("TOPLEFT", body, "TOPLEFT", 2, -y)
+      watchButton:Show()
+      y = y + 22
+    else
+      watchButton:Hide()
     end
   end
 
