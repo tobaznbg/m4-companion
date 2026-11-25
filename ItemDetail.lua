@@ -842,7 +842,7 @@ end
 do
   local NAME = "M4CompanionPriceChart"
   local W, H = 900, 560
-  local LEFT, RIGHT, TOP, BOTTOM = 70, 96, 74, 34 -- plot margins in the page
+  local LEFT, RIGHT, TOP, BOTTOM = 70, 124, 74, 34 -- plot margins in the page (right: the labels, "jetzt … +12 %")
   -- the live view's bottom margin: the bait and fish line and buttons go under the time axis
   local BOTTOM_LIVE = 100
   local RANGES = {
@@ -854,6 +854,7 @@ do
   }
   local BUY_RGB, SELL_RGB = { 0.37, 0.83, 0.55 }, { 0.45, 0.68, 1 }
   local OUT_RGB, TAIL_RGB = { 1, 0.71, 0.28 }, { 0.85, 0.95, 1 }
+  local USUAL_RGB = { 0.78, 0.62, 1 } -- the usual price at this hour of the day
   local SOURCES = { cloud = "Cloud-Snapshot", scan = "eigener Vollscan", search = "eigene Suche",
     players = "andere Spieler (Cloud)", live = "andere Spieler (live)" }
   local TAIL_MAX = 1500 -- fine points kept per item and house (only changes: a busy day fits)
@@ -2405,6 +2406,40 @@ do
     lo, hi = lo or values[1], hi or values[1]
     -- live: catch limit and bait in the scale, the gap between them and the market is the point
     if plan and plan.limit then lo, hi = math.min(lo, plan.bait), math.max(hi, plan.limit) end
+    -- How the price usually behaves: per hour of the day (local time) the median of the hourly
+    -- cheapest offers of the 7 days before today (at least 3 days per hour). Drawn as a violet
+    -- step line; "jetzt" shows the delta to the usual price of this hour.
+    local usual = {}
+    if series then
+      local today0 = time({ year = tonumber(date("%Y")), month = tonumber(date("%m")), day = tonumber(date("%d")), hour = 0 })
+      local from, byHour = today0 - 7 * 86400, {}
+      for i = 1, #series.t0 do
+        local p, t0, t1 = series.p[i], series.t0[i], series.t1[i]
+        -- hourly slots only (the 2 h slots further back would smear two hours)
+        if p and p > 0 and t0 >= from and t0 < today0 and t1 - t0 <= 3600 then
+          local hr = tonumber(date("%H", t0))
+          byHour[hr] = byHour[hr] or {}
+          table.insert(byHour[hr], p)
+        end
+      end
+      for hr, ps in pairs(byHour) do
+        if #ps >= 3 then
+          table.sort(ps)
+          local n = #ps
+          usual[hr] = n % 2 == 1 and ps[(n + 1) / 2] or math.floor((ps[n / 2] + ps[n / 2 + 1]) / 2 + 0.5)
+        end
+      end
+    end
+    local function usualAt(t) return usual[tonumber(date("%H", t))] end
+    -- the usual prices over the axis in the scale (the comparison is the point)
+    do
+      local t = v.axisStart - v.axisStart % 3600
+      while t < axisEnd do
+        local u = usualAt(t)
+        if u then lo, hi = math.min(lo, u), math.max(hi, u) end
+        t = t + 3600
+      end
+    end
     local limit, ask = r and r[3], r and r[4]
     -- the scale follows the prices of the range only (else far reference lines flatten the
     -- curve); R, buy limit and target outside it become arrows on the edge
@@ -2502,6 +2537,24 @@ do
         end
       end
     end
+    -- the usual price per hour of the day: a violet step line
+    do
+      local t = v.axisStart - v.axisStart % 3600
+      local prevU
+      while t < axisEnd do
+        local u = usualAt(t)
+        local x0, x1 = math.max(0, X(t)), math.min(w, X(t + 3600))
+        if u and x1 > x0 then
+          local yy = py(u)
+          if prevU then segment(x0, prevU, x0, yy, USUAL_RGB, 0.45) end
+          segment(x0, yy, x1, yy, USUAL_RGB, 0.6)
+          prevU = yy
+        else
+          prevU = nil
+        end
+        t = t + 3600
+      end
+    end
     -- live tail: lighter points and line, from the curve's end on
     local last = prev
     for _, pt in ipairs(v.tail) do
@@ -2552,9 +2605,19 @@ do
       labels[#labels + 1] = { y = py(plan.bait), text = "Köder " .. money(plan.bait), rgb = SELL_RGB }
     end
     -- the price now as a marker on the right edge
+    -- the usual price of this hour, and the delta of the price now to it
+    local uNow = usualAt(time())
+    if uNow then
+      labels[#labels + 1] = { y = py(uNow), text = "üblich " .. money(uNow), rgb = USUAL_RGB }
+    end
     if e.now and e.now > 0 then
       mark(w, py(e.now), 7, GOLD_RGB)
-      labels[#labels + 1] = { y = py(e.now), text = "jetzt " .. money(e.now), rgb = GOLD_RGB }
+      local delta = ""
+      if uNow and uNow > 0 then
+        local d = e.now / uNow - 1
+        delta = string.format(" %s%+d %%|r", d >= 0 and "|cff5fd38d" or "|cffff6b6b", math.floor(d * 100 + 0.5))
+      end
+      labels[#labels + 1] = { y = py(e.now), text = "jetzt " .. money(e.now) .. delta, rgb = GOLD_RGB }
     end
     placeLabels(labels, h)
     finish()
