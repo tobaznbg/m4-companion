@@ -25,6 +25,21 @@ local function settings()
   return ns.db.ui
 end
 
+-- The ledger page's stock (Profit.Stock) by item, for the watch list's book gain. That replays
+-- the whole ledger: at most once a minute (the box redraws every few seconds).
+local stockCache, stockAt = {}, -1000
+local function stockByItem()
+  local t = GetTime()
+  if t - stockAt < 60 then return stockCache end
+  stockAt = t
+  local ok, list = pcall(ns.Profit.Stock)
+  stockCache = {}
+  if ok and type(list) == "table" then
+    for _, st in ipairs(list) do stockCache[st.itemId] = st end
+  end
+  return stockCache
+end
+
 -- The watch list: item ids in the order they were added (ns.db.watch).
 local Watch = {}
 ns.Watch = Watch
@@ -178,28 +193,27 @@ local function refresh()
           or "2 h einstellen, 1 Kupfer unter dem Günstigsten (der liegt unter dem Zielpreis)." })
     end
   end
-  -- the watch list: price now and, for what the household holds, the gain if sold now (after
-  -- the cut, against the own cost per unit); without holdings the change to yesterday's median
+  -- the watch list: for what the household holds the book gain of the ledger page (Profit.Stock:
+  -- units incl. auctions and transit, selling after the cut minus the cost), else the price now
+  -- and its change to yesterday's median
   local watch = watched()
   if #watch > 0 then
     add({ head = "Beobachtet", gap = true })
+    local stock = stockByItem()
     for _, id in ipairs(watch) do
       local e = ns.Item.Get(id)
       local now, ch = e and e.now, e and e.change
-      local held = ns.ShoppingList and ns.ShoppingList.Holdings and ns.ShoppingList.Holdings(id) or 0
-      local own, src
-      if held > 0 and ns.DayTrade.OwnCost then own, src = ns.DayTrade.OwnCost(id) end
+      local st = stock[id]
       local right, tip
-      if not now then
+      if st and st.gain then
+        right = string.format("%s%d×|r  %s%s%s|r", MUTED, st.units, st.gain >= 0 and GREEN or RED, st.gain >= 0 and "+" or "−", money(math.abs(st.gain)))
+        tip = string.format("Bestand %d Stück, Einstand %s je Stück (%s).\nVerkauf jetzt nach Gebühr %s je Stück → Buchgewinn %s%s.",
+          st.units, money(st.unitCost), st.source or "?", money(st.sellUnit or 0), st.gain >= 0 and "+" or "−", money(math.abs(st.gain)))
+      elseif not now then
         right = MUTED .. "nicht im AH|r"
-      elseif held > 0 and own then
-        local gain = held * (now * 0.95 - own)
-        right = string.format("%s  %s%s%s|r", money(now), gain >= 0 and GREEN or RED, gain >= 0 and "+" or "−", money(math.abs(gain)))
-        tip = string.format("%d Stück, Einstand %s je Stück (%s).\nJetzt verkauft (günstigstes Angebot %s, nach Gebühr): %s%s.",
-          held, money(own), src or "?", money(now), gain >= 0 and "+" or "−", money(math.abs(gain)))
       else
         right = money(now) .. (ch and string.format("  %s%+d %%|r", ch >= 0 and GREEN or RED, math.floor(ch * 100 + 0.5)) or "")
-        tip = "Prozent: jetzt zu Median gestern."
+        tip = "Kein Bestand. Prozent: jetzt zu Median gestern."
       end
       add({ itemID = id, watch = true, text = ns.ItemName(id) or ("Item " .. id), right = right,
         tip = (tip and (tip .. "\n") or "") .. "Klick: großes Diagramm. Rechtsklick: nicht mehr beobachten." })
