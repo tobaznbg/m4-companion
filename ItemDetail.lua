@@ -855,6 +855,7 @@ do
   local BUY_RGB, SELL_RGB = { 0.37, 0.83, 0.55 }, { 0.45, 0.68, 1 }
   local OUT_RGB, TAIL_RGB = { 1, 0.71, 0.28 }, { 0.85, 0.95, 1 }
   local USUAL_RGB = { 0.78, 0.62, 1 } -- the usual price at this hour of the day
+  local OWN_RGB = { 1, 0.45, 0.75 } -- our own running auctions
   local SOURCES = { cloud = "Cloud-Snapshot", scan = "eigener Vollscan", search = "eigene Suche",
     players = "andere Spieler (Cloud)", live = "andere Spieler (live)" }
   local TAIL_MAX = 1500 -- fine points kept per item and house (only changes: a busy day fits)
@@ -2631,6 +2632,23 @@ do
       local arrow = edge(ask)
       if not arrow then dashed(py(ask), w, SELL_RGB) end
       labels[#labels + 1] = { y = py(ask), text = "Ziel " .. money(ask) .. (arrow or ""), rgb = SELL_RGB }
+    end
+    -- our own running auctions of the item (every character of the household, from the game's
+    -- own auction list, MyAuctions.lua): one pink dashed line per price with the units
+    local mine = {}
+    for _, key in ipairs(ns.Ledger and ns.Ledger.Household and ns.Ledger.Household() or {}) do
+      local o = ns.db.owned and ns.db.owned[key]
+      for _, a in ipairs(o and o.list or {}) do
+        local running = not (a.tl and o.t and o.t + a.tl < time())
+        if a.i == id and not a.s and a.u and a.u > 0 and running then
+          mine[a.u] = (mine[a.u] or 0) + (a.q or 1)
+        end
+      end
+    end
+    for price, q in pairs(mine) do
+      local arrow = edge(price)
+      if not arrow then dashed(py(price), w, OWN_RGB, 8, 12) end
+      labels[#labels + 1] = { y = py(price), text = string.format("Meine %d× %s", q, money(price)) .. (arrow or ""), rgb = OWN_RGB }
     end
     -- bait and fish: catch limit green dashed, bait blue dotted
     if plan and plan.limit then
