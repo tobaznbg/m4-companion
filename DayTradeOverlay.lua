@@ -178,17 +178,31 @@ local function refresh()
           or "2 h einstellen, 1 Kupfer unter dem Günstigsten (der liegt unter dem Zielpreis)." })
     end
   end
-  -- the watch list: price now and against yesterday's median
+  -- the watch list: price now and, for what the household holds, the gain if sold now (after
+  -- the cut, against the own cost per unit); without holdings the change to yesterday's median
   local watch = watched()
   if #watch > 0 then
     add({ head = "Beobachtet", gap = true })
     for _, id in ipairs(watch) do
       local e = ns.Item.Get(id)
       local now, ch = e and e.now, e and e.change
-      add({ itemID = id, watch = true, text = ns.ItemName(id) or ("Item " .. id),
-        right = now and (money(now) .. (ch and string.format("  %s%+d %%|r", ch >= 0 and GREEN or RED,
-          math.floor(ch * 100 + 0.5)) or "")) or (MUTED .. "nicht im AH|r"),
-        tip = "Klick: großes Diagramm.\nRechtsklick: nicht mehr beobachten.\nProzent: jetzt zu Median gestern." })
+      local held = ns.ShoppingList and ns.ShoppingList.Holdings and ns.ShoppingList.Holdings(id) or 0
+      local own, src
+      if held > 0 and ns.DayTrade.OwnCost then own, src = ns.DayTrade.OwnCost(id) end
+      local right, tip
+      if not now then
+        right = MUTED .. "nicht im AH|r"
+      elseif held > 0 and own then
+        local gain = held * (now * 0.95 - own)
+        right = string.format("%s  %s%s%s|r", money(now), gain >= 0 and GREEN or RED, gain >= 0 and "+" or "−", money(math.abs(gain)))
+        tip = string.format("%d Stück, Einstand %s je Stück (%s).\nJetzt verkauft (günstigstes Angebot %s, nach Gebühr): %s%s.",
+          held, money(own), src or "?", money(now), gain >= 0 and "+" or "−", money(math.abs(gain)))
+      else
+        right = money(now) .. (ch and string.format("  %s%+d %%|r", ch >= 0 and GREEN or RED, math.floor(ch * 100 + 0.5)) or "")
+        tip = "Prozent: jetzt zu Median gestern."
+      end
+      add({ itemID = id, watch = true, text = ns.ItemName(id) or ("Item " .. id), right = right,
+        tip = (tip and (tip .. "\n") or "") .. "Klick: großes Diagramm. Rechtsklick: nicht mehr beobachten." })
     end
   end
   local y = -40
