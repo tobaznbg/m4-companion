@@ -262,6 +262,13 @@ local function holdings(itemID)
   return H and (H(itemID)) or 0
 end
 
+-- Cooldown recipes (Mooncloth) giving points between from and to: not on the way, crafted on
+-- the side whenever ready (Planner.Cooldowns). recipes: the recipe list if already built.
+function Costs.Cooldowns(prof, from, to, recipes)
+  recipes = recipes or (prof.skill and ns.Planner.SkillRecipes(prof.skill, prof.scan) or prof.scan.recipes)
+  return ns.Planner.Cooldowns(recipes, prof.skill and prof.skill.recipes or prof.data, from, to)
+end
+
 function Costs.Plan(prof, from, to, ahCap, way)
   local prices, scarce = {}, {}
   local function buy(itemID)
@@ -300,8 +307,7 @@ function Costs.Plan(prof, from, to, ahCap, way)
   end
   local srcs = ns.RecipeSources and ns.RecipeSources[prof.pid]
   local recipes = prof.skill and ns.Planner.SkillRecipes(prof.skill, prof.scan) or prof.scan.recipes
-  -- cooldown recipes (Mooncloth, transmutations): not on the way, a hint "on the side"
-  result.cooldowns = ns.Planner.Cooldowns(recipes, prof.skill and prof.skill.recipes or prof.data, from, to)
+  result.cooldowns = Costs.Cooldowns(prof, from, to, recipes)
   if srcs and result.reached < to then
     result.missing = ns.Planner.Missing(recipes, prof.skill and prof.skill.recipes or prof.data, srcs,
       prof.ctx or Costs.Context(), result.reached, way or "standard", Costs.PatternPrice)

@@ -118,12 +118,63 @@ local function compute(professionID)
   end
   result = result or ns.Costs.Plan(prof, from, maxSkill(), ahCap(), out.way)
   out.result = result
+  -- cooldown recipes (Mooncloth): an entry of their own, crafted on the side whenever ready
+  out.cooldowns = ns.Costs.Cooldowns(prof, from, maxSkill())
   if not result.segments then out.why = "noway" return out end
   -- the own cap counts only when planning from the own skill range (as MainUI does)
   local max = prof.max
   if not (max and from <= max and from >= max - 75) then max = nil end
   out.steps = ns.Planner.Steps(result.segments, from, max)
   return out
+end
+
+-- Cooldowns ---------------------------------------------------------------------------------
+
+-- When the cooldown recipes (Planner.COOLDOWN) are ready again, per character:
+-- ns.db.chars[key].cooldowns[spellID] = time() it is ready (0: ready); nil: not learned / unknown.
+-- Read from the spell's cooldown, so another character's (the knower's) state is the one seen
+-- last on that character.
+local function spellCooldown(spellID)
+  if C_Spell and C_Spell.GetSpellCooldown then
+    local info = C_Spell.GetSpellCooldown(spellID)
+    if type(info) == "table" then return info.startTime, info.duration end
+  end
+  if GetSpellCooldown then return GetSpellCooldown(spellID) end
+end
+
+local function storeCooldowns()
+  local char = ns.db and ns.db.chars and ns.CharKey and ns.db.chars[ns.CharKey()]
+  if not char then return end
+  for spellID in pairs(ns.Planner and ns.Planner.COOLDOWN or {}) do
+    local known = IsPlayerSpell and IsPlayerSpell(spellID)
+    if known then
+      local start, duration = spellCooldown(spellID)
+      local ready = 0
+      -- the global cooldown (1.5 s) after any cast is no recipe cooldown
+      if start and duration and start > 0 and duration > 2 then
+        ready = time() + math.max(0, math.floor(start + duration - GetTime() + 0.5))
+      end
+      char.cooldowns = char.cooldowns or {}
+      char.cooldowns[spellID] = ready
+    elseif char.cooldowns then
+      char.cooldowns[spellID] = nil
+    end
+  end
+end
+
+-- Seconds until the recipe is ready for that character (0: ready), nil when unknown.
+local function cooldownLeft(spellID, charKey)
+  if charKey == nil or charKey == ns.CharKey() then storeCooldowns() end
+  local char = ns.db and ns.db.chars and ns.db.chars[charKey or ns.CharKey()]
+  local ready = char and char.cooldowns and char.cooldowns[spellID]
+  if ready == nil then return nil end
+  return math.max(0, ready - time())
+end
+
+local function duration(s)
+  if s >= 86400 then return string.format("%d T %d h", math.floor(s / 86400), math.floor(s % 86400 / 3600)) end
+  if s >= 3600 then return string.format("%d h %d min", math.floor(s / 3600), math.floor(s % 3600 / 60)) end
+  return string.format("%d min", math.max(1, math.ceil(s / 60)))
 end
 
 -- Reagent lines of a need table (Planner.Shopping): { itemID, need, have, missing, unit,
@@ -203,6 +254,24 @@ local function planEntries(st)
   st.sections = {}
   if not st.steps then return out end
   out[1] = { key = "all", name = "Gesamter Plan", value = net(overview(st).balance.net), all = true }
+  -- cooldown recipes right under it, green with a glow while ready
+  st.nextReady = nil
+  for _, cd in ipairs(st.cooldowns or {}) do
+    local left = cd.learned and cooldownLeft(cd.spell, st.knower) or nil
+    local value, color, glow
+    if not cd.learned then
+      value = MUTED .. "ab " .. cd.learnAt .. "|r"
+    elseif left == nil then
+      value = MUTED .. "?|r"
+    elseif left <= 0 then
+      value, color, glow = GREEN .. "bereit|r", { 0.37, 0.83, 0.55 }, true
+    else
+      value = MUTED .. "in " .. duration(left) .. "|r"
+      st.nextReady = math.min(st.nextReady or left, left)
+    end
+    out[#out + 1] = { key = "cd:" .. cd.spell, name = cd.name or "?", itemID = cd.out, cooldown = cd, left = left,
+      value = value, color = color, glow = glow, locked = not cd.learned }
+  end
   local lists = {}
   local function put(idx, e)
     lists[idx] = lists[idx] or {}
@@ -634,14 +703,7 @@ local function showOverview(v, st)
     end
     if #info == 0 then info[1] = { text = MUTED .. "Keine Rezepte bekannt, die hier noch Punkte geben.|r" } end
   end
-  local infoTitle = info and (ORANGE .. string.format("Der Weg endet bei Skill %d – es fehlen Rezepte:", r.reached) .. "|r")
-  -- cooldown recipes (Mooncloth, transmutations): not on the way, crafted on the side
-  for _, cd in ipairs(r.cooldowns or {}) do
-    info = info or {}
-    infoTitle = infoTitle or (ORANGE .. "Hinweis:|r")
-    table.insert(info, 1, { text = ORANGE .. "Nebenbei:|r " .. ns.Planner.CooldownText(cd) })
-  end
-  local anchor, gap = setInfo(v, infoTitle, info)
+  local anchor, gap = setInfo(v, info and (ORANGE .. string.format("Der Weg endet bei Skill %d – es fehlen Rezepte:", r.reached) .. "|r"), info)
   local ov = overview(st)
   local b = ov.balance
   v.Head:SetText("Material gesamt:")
@@ -711,6 +773,33 @@ local function showStep(v, st, seg, section)
   v.SectionButton:Show()
 end
 
+-- A cooldown recipe (Mooncloth): not on the way, crafted on the side whenever it is ready.
+local function showCooldown(v, st, entry)
+  local cd = entry.cooldown
+  local icon = itemIcon(cd.out) or (GetSpellTexture and GetSpellTexture(cd.spell)) or PLAN_ICON
+  setHead(v, icon, cd.out, qualityName(cd.out, cd.name or "?"),
+    string.format("Abklingzeit · gibt Punkte bis Skill %d · nebenbei herstellen", cd.upTo or 0))
+  local lines = {}
+  local left = entry.left
+  if not cd.learned then
+    lines[1] = { text = ORANGE .. "Noch nicht gelernt – ab Skill " .. cd.learnAt .. ".|r" }
+  elseif left == nil then
+    lines[1] = { text = MUTED .. "Abklingzeit unbekannt – einmal mit diesem Charakter einloggen.|r" }
+  elseif left <= 0 then
+    lines[1] = { text = GREEN .. "Bereit – jetzt herstellen.|r" }
+  else
+    lines[1] = { text = "Wieder bereit in " .. duration(left) .. MUTED .. "  (" .. date("%d.%m. %H:%M", time() + left) .. ")|r" }
+  end
+  lines[2] = { text = MUTED .. "Nicht im Weg: wegen der Abklingzeit nur einmal je Abklingzeit herstellbar.|r" }
+  local anchor, gap = setInfo(v, "Status:", lines)
+  local need = {}
+  for _, reagent in ipairs(cd.reagents or {}) do
+    if reagent.i then need[reagent.i] = (need[reagent.i] or 0) + (reagent.n or 1) end
+  end
+  v.Head:SetText("Reagenzien (1×):")
+  setTable(v, anchor, gap, materialLines(need, nil, nil), MAX_ROWS - #lines - 1)
+end
+
 local function show(entry, c)
   if not rawget(c, "m4Plan") then c.m4Plan = buildCard(c) end
   local v = c.m4Plan
@@ -719,6 +808,8 @@ local function show(entry, c)
   if not (entry and not entry.header and st and st.steps) then return end
   if entry.all then
     showOverview(v, st)
+  elseif entry.cooldown then
+    showCooldown(v, st, entry)
   elseif entry.rankStep then
     showRank(v, st, entry.rankStep, entry.section)
   elseif entry.seg then
@@ -752,6 +843,14 @@ local function refresh()
   if f.SetTitle then pcall(f.SetTitle, f, "Planer" .. (name and (" – " .. name) or "") .. who) end
   if data and data.icon and f.SetPortraitToAsset then pcall(f.SetPortraitToAsset, f, data.icon) end
   split.SetEntries(planEntries(cache))
+  -- a cooldown running out while the window is open: the entry turns green then
+  if cache.nextReady and cache.nextReady < 3600 and C_Timer then
+    local token = {}
+    Plan.readyTimer = token
+    C_Timer.After(cache.nextReady + 1, function()
+      if Plan.readyTimer == token and window and window.frame:IsShown() then ns.Safe(refresh) end
+    end)
+  end
   if split.empty then split.empty:SetText(cache.steps and "" or (MESSAGES[cache.why] or MESSAGES.nodata)) end
 end
 Plan.Refresh = refresh
@@ -837,7 +936,12 @@ if ns.Recipes and ns.Recipes.OnScanned then
   end)
 end
 
--- Bags change (bought, crafted, taken from the bank): the card's stock follows, the plan stays.
+-- The cooldowns are stored on login and after every craft (for the knower seen from twinks).
+ns.On("PLAYER_ENTERING_WORLD", function() if C_Timer then C_Timer.After(3, storeCooldowns) end end)
+ns.On("TRADE_SKILL_UPDATE", storeCooldowns)
+
+-- Bags change (bought, crafted, taken from the bank): the card's stock follows, the plan stays,
+-- the cooldown entries show their state anew (crafting Mooncloth starts its cooldown).
 local pending = false
 ns.On("BAG_UPDATE_DELAYED", function()
   if pending or not (window and window.frame:IsShown() and split) then return end
@@ -845,6 +949,6 @@ ns.On("BAG_UPDATE_DELAYED", function()
   C_Timer.After(0.5, function()
     pending = false
     if cache then cache.overview = nil end
-    ns.Safe(split.Rebuild)
+    if cache and cache.cooldowns and #cache.cooldowns > 0 then ns.Safe(refresh) else ns.Safe(split.Rebuild) end
   end)
 end)

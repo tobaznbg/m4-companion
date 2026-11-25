@@ -164,8 +164,8 @@ end
 Planner.COOLDOWN = {
   [18560] = "Mondstoff", -- Tailoring, several days
 }
-local cooldownNames = {}
-for _, name in pairs(Planner.COOLDOWN) do cooldownNames[name] = true end
+local cooldownNames = {} -- name -> spell ID (recipe scans are not keyed by spell ID)
+for spellID, name in pairs(Planner.COOLDOWN) do cooldownNames[name] = spellID end
 
 local function cooldownRecipe(recipe, recipeID)
   -- Transmutations (Forever: 1 hour, Arcanite ~2 days) and Mooncloth (several days) have a
@@ -173,21 +173,22 @@ local function cooldownRecipe(recipe, recipeID)
   -- the skill. Planner.Cooldowns lists them as "on the side, whenever it is ready".
   if recipeID and Planner.COOLDOWN[recipeID] then return true end
   local name = recipe.name
-  return name ~= nil and (cooldownNames[name] or name:find("^Transmutieren") ~= nil) or false
+  return name ~= nil and (cooldownNames[name] ~= nil or name:find("^Transmutieren") ~= nil) or false
 end
 
 -- Cooldown recipes that give points somewhere between `from` and `to`: worth crafting
 -- whenever the cooldown is ready, but not part of the way. Only Planner.COOLDOWN: the many
 -- transmutations would crowd the plan (they stay left out of the way, as before).
--- { id, name, out, learned, learnAt, upTo (grey from) }... sorted by learn level.
+-- { id, spell (spell ID, for its cooldown), name, out, reagents, learned, learnAt, upTo (grey
+-- from) }... sorted by learn level.
 function Planner.Cooldowns(scanRecipes, data, from, to)
   local list = {}
   for recipeID, recipe in pairs(scanRecipes or {}) do
     local d = data[recipeID]
-    if d and (Planner.COOLDOWN[recipeID] or cooldownNames[recipe.name or ""]) and (d[4] or 0) > from
-        and (d[5] or d[1] or 0) < to then
-      table.insert(list, { id = recipeID, name = recipe.name, out = recipe.out, learned = recipe.learned and true or false,
-        learnAt = d[5] or d[1] or 0, upTo = d[4] })
+    local spell = Planner.COOLDOWN[recipeID] and recipeID or cooldownNames[recipe.name or ""]
+    if d and spell and (d[4] or 0) > from and (d[5] or d[1] or 0) < to then
+      table.insert(list, { id = recipeID, spell = spell, name = recipe.name, out = recipe.out, reagents = recipe.r,
+        learned = recipe.learned and true or false, learnAt = d[5] or d[1] or 0, upTo = d[4] })
     end
   end
   table.sort(list, function(a, b)
@@ -199,8 +200,11 @@ end
 
 -- Text for one cooldown recipe (Planner.Cooldowns), for the planner views.
 function Planner.CooldownText(c)
-  return string.format("%s hat Abklingzeit – herstellen, sobald bereit (%sPunkte bis %d)",
-    c.name or "?", c.learned and "" or ("lernbar ab " .. c.learnAt .. ", "), c.upTo or 0)
+  -- short: the plan window's info lines do not wrap
+  if not c.learned then
+    return string.format("%s ab %d lernen, dann wenn bereit (Abklingzeit, bis %d)", c.name or "?", c.learnAt, c.upTo or 0)
+  end
+  return string.format("%s, sobald bereit (Abklingzeit, Punkte bis %d)", c.name or "?", c.upTo or 0)
 end
 
 -- Builds the list of candidate recipes.

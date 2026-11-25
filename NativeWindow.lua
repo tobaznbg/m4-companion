@@ -492,6 +492,17 @@ function NW.Split(page, opts)
             button.m4Marker:SetPoint("RIGHT", label, "LEFT", -2, -1)
           end
           button.m4Marker:SetShown(data.marker == "down")
+          -- data.glow: a green glow behind the row (e.g. a cooldown recipe that is ready)
+          if data.glow and not button.m4Glow then
+            button.m4Glow = button:CreateTexture(nil, "BACKGROUND", nil, 1)
+            button.m4Glow:SetPoint("TOPLEFT", 1, -1)
+            button.m4Glow:SetPoint("BOTTOMRIGHT", -1, 1)
+            button.m4Glow:SetTexture("Interface\\Buttons\\WHITE8X8")
+            local graded = button.m4Glow.SetGradient and CreateColor and pcall(button.m4Glow.SetGradient, button.m4Glow,
+              "HORIZONTAL", CreateColor(0.2, 0.85, 0.4, 0.45), CreateColor(0.2, 0.85, 0.4, 0.05))
+            if not graded then button.m4Glow:SetVertexColor(0.2, 0.85, 0.4, 0.3) end
+          end
+          if button.m4Glow then button.m4Glow:SetShown(data.glow and true or false) end
           -- data.coins = 1..3 (or marker "coin" = 1): gold coins left of the name, how much it pays
           if not button.m4Coins then button.m4Coins = NW.Coins(button, label) end
           -- coins and data.indent (a sub-entry) move the name right, from its own anchor (read once)
