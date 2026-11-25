@@ -2578,10 +2578,15 @@ do
       last = { x = bucket.x, y = yy }
       bucket = nil
     end
+    -- the curve's last point sits in the middle of its slot: live points left of it are drawn
+    -- by the curve already (a line back to them would run backwards)
+    local curveEnd = prev and prev.x or -1
     for _, pt in ipairs(v.tail) do
       local x = math.max(0, math.min(w, X(pt.t)))
       pt.x = x
-      if pt.p > 0 then
+      if x < curveEnd then
+        -- covered by the curve
+      elseif pt.p > 0 then
         if bucketed then
           local slot = math.floor(x / TAIL_PX)
           if bucket and bucket.slot ~= slot then flush() end
