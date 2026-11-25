@@ -2560,21 +2560,46 @@ do
         t = t + 3600
       end
     end
-    -- live tail: lighter points and line, from the curve's end on
+    -- live tail: lighter points and line, from the curve's end on. Outside the live view many
+    -- points fall on a few pixels (a search every second): there one point per TAIL_PX pixels,
+    -- the median price of its points, without markers - else the line zigzags in a stripe.
     local last = prev
+    local TAIL_PX = 4
+    local bucketed = rng.key ~= "live"
+    local bucket
+    local function flush()
+      if not bucket then return end
+      local ps = bucket.ps
+      table.sort(ps)
+      local n = #ps
+      local p = n % 2 == 1 and ps[(n + 1) / 2] or (ps[n / 2] + ps[n / 2 + 1]) / 2
+      local yy = py(p)
+      if last then segment(last.x, last.y, bucket.x, yy, TAIL_RGB, 0.7) end
+      last = { x = bucket.x, y = yy }
+      bucket = nil
+    end
     for _, pt in ipairs(v.tail) do
       local x = math.max(0, math.min(w, X(pt.t)))
       pt.x = x
       if pt.p > 0 then
-        local yy = py(pt.p)
-        if last then segment(last.x, last.y, x, yy, TAIL_RGB, 0.7) end
-        mark(x, yy, 4, TAIL_RGB)
-        last = { x = x, y = yy }
+        if bucketed then
+          local slot = math.floor(x / TAIL_PX)
+          if bucket and bucket.slot ~= slot then flush() end
+          bucket = bucket or { slot = slot, x = (slot + 0.5) * TAIL_PX, ps = {} }
+          bucket.ps[#bucket.ps + 1] = pt.p
+        else
+          local yy = py(pt.p)
+          if last then segment(last.x, last.y, x, yy, TAIL_RGB, 0.7) end
+          mark(x, yy, 4, TAIL_RGB)
+          last = { x = x, y = yy }
+        end
       else
+        flush()
         mark(x, 2.5, 4, OUT_RGB, 0.9)
         last = nil
       end
     end
+    flush()
     -- reference lines and their labels in the right margin
     local labels = {}
     -- a reference outside the scale: no line, its label on the edge with an arrow
