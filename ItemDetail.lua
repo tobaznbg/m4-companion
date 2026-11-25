@@ -32,6 +32,7 @@ local GREEN, ORANGE = "|cff5fd38d", "|cffffb547"
 
 local frame, body, scroll, itemID
 local recipeButton -- "Im Beruf zeigen" under the crafting / recipe lines
+local watchButton -- "Beobachten" / "Entfernen" at the very bottom (ns.Watch, the overlay's list)
 local origin   -- "sniper" when opened from the sniper list at the auction house
 local docked   -- anchor frame while docked at the auction house, nil as a window of its own
 local lines, sections = {}, {}
@@ -2347,6 +2348,26 @@ do
         if pt.q and pt.q > 0 and (not qmin or pt.q < qmin) then qmin = pt.q end
       end
     end
+    -- the usual quantity: median of the hourly quantities of the last 7 days (whatever range is
+    -- shown), drawn as a dotted line in the bar zone - more or less on offer than usual
+    local qMed
+    if series then
+      local qs, from = {}, time() - 7 * 86400
+      for i = 1, #series.t0 do
+        local q = series.q[i]
+        if q and q > 0 and series.t1[i] > from then qs[#qs + 1] = q end
+      end
+      if #qs >= 6 then
+        table.sort(qs)
+        local n = #qs
+        qMed = n % 2 == 1 and qs[(n + 1) / 2] or math.floor((qs[n / 2] + qs[n / 2 + 1]) / 2 + 0.5)
+      end
+    end
+    if qMed and qmax > 0 then
+      -- the scale reaches it, so the bars stand against it
+      qmax = math.max(qmax, qMed)
+      qmin = math.min(qmin or qMed, qMed)
+    end
     drawHead(id, e, values, rng)
     ui.live:SetText(liveText(id))
     Fish.Refresh()
@@ -2449,9 +2470,12 @@ do
         bar:SetSize(math.max(2, x1 - x0 - 1), qh(pt.q))
       end
     end
+    -- the usual quantity (median 7 days): a dotted line through the bars
+    if qMed and qmax > 0 then dashed(1 + qh(qMed), w, { 1, 1, 1 }, 2, 5) end
     ui.qty:ClearAllPoints()
     ui.qty:SetPoint("BOTTOMLEFT", ui.plot, "BOTTOMLEFT", 4, barZone + 1)
-    ui.qty:SetText(qmax > 0 and ("Menge " .. count(qmin or qmax) .. "–" .. count(qmax) .. " Stück") or "")
+    ui.qty:SetText(qmax > 0 and ("Menge " .. count(qmin or qmax) .. "–" .. count(qmax) .. " Stück"
+      .. (qMed and ("   |cffffffff··· üblich " .. count(qMed) .. "|r |cff999999(Median 7 Tage)|r") or "")) or "")
     -- the resolution hint beside it, inside the plot (the head line is full)
     ui.res:ClearAllPoints()
     ui.res:SetPoint("LEFT", ui.qty, "RIGHT", 16, 0)
@@ -3027,6 +3051,32 @@ local function renderBody()
       y = y + 22
     else
       recipeButton:Hide()
+    end
+  end
+
+  -- "Beobachten" / "Entfernen": the item on the overlay's watch list (a click there opens the
+  -- big chart), at the very bottom
+  if not watchButton then
+    local ok, b = pcall(CreateFrame, "Button", nil, body, "UIPanelButtonTemplate")
+    if ok and b then
+      b:SetSize(130, 20)
+      b:SetScript("OnClick", function()
+        if itemID and ns.Watch then ns.Watch.Toggle(itemID) end
+        render()
+      end)
+      watchButton = b
+    end
+  end
+  if watchButton then
+    watchButton:ClearAllPoints()
+    if itemID and ns.Watch then
+      watchButton:SetText(ns.Watch.Has(itemID) and "Entfernen" or "Beobachten")
+      y = y + 8
+      watchButton:SetPoint("TOPLEFT", body, "TOPLEFT", 2, -y)
+      watchButton:Show()
+      y = y + 22
+    else
+      watchButton:Hide()
     end
   end
 

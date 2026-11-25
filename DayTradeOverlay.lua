@@ -4,6 +4,9 @@
 -- tab on that item (and searches it when the auction house is open); right click hides the box,
 -- "/m4 overlay" brings it back. The numbers come from DayTrade.lua (Trade.States), so the box and
 -- the tab never disagree.
+-- Under it the watch list ("Beobachtet", ns.Watch): items put there with the market data window's
+-- "Beobachten" button, each with its price now and against yesterday's median; a click opens the
+-- big price chart (ItemDetail's Big), a right click takes the item off the list.
 local ADDON, ns = ...
 
 local Overlay = {}
@@ -20,6 +23,33 @@ local function money(c) return ns.FormatMoney(math.floor((c or 0) + 0.5), true) 
 local function settings()
   ns.db.ui = ns.db.ui or {}
   return ns.db.ui
+end
+
+-- The watch list: item ids in the order they were added (ns.db.watch).
+local Watch = {}
+ns.Watch = Watch
+local function watched()
+  ns.db.watch = ns.db.watch or {}
+  return ns.db.watch
+end
+function Watch.List() return watched() end
+function Watch.Has(id)
+  for _, x in ipairs(watched()) do if x == id then return true end end
+  return false
+end
+-- Adds the item (and shows the box) or takes it off; returns whether it is watched now.
+function Watch.Toggle(id)
+  local list = watched()
+  for i, x in ipairs(list) do
+    if x == id then
+      table.remove(list, i)
+      Overlay.Refresh()
+      return false
+    end
+  end
+  list[#list + 1] = id
+  if frame and frame:IsShown() then Overlay.Refresh() else Overlay.Show() end
+  return true
 end
 
 -- "Cloud 34m · Scan 21m · Spieler 3m": the age of each source, colored by it. "Spieler" is the
@@ -69,6 +99,13 @@ local function row(i)
   hl:SetAllPoints()
   hl:SetColorTexture(1, 1, 1, 0.08)
   b:SetScript("OnClick", function(self, button)
+    if self.watch and self.itemID then
+      -- watch list: left the big chart, right off the list
+      if button == "RightButton" then return Watch.Toggle(self.itemID) end
+      local Big = ns.ItemDetail and ns.ItemDetail.Big
+      if Big and Big.Show then ns.Safe(Big.Show, self.itemID) end
+      return
+    end
     if button == "RightButton" then return Overlay.Hide() end
     if not self.itemID then return end
     ns.Safe(ns.DayTrade.Show, self.itemID)
@@ -141,6 +178,19 @@ local function refresh()
           or "2 h einstellen, 1 Kupfer unter dem Günstigsten (der liegt unter dem Zielpreis)." })
     end
   end
+  -- the watch list: price now and against yesterday's median
+  local watch = watched()
+  if #watch > 0 then
+    add({ head = "Beobachtet", gap = true })
+    for _, id in ipairs(watch) do
+      local e = ns.Item.Get(id)
+      local now, ch = e and e.now, e and e.change
+      add({ itemID = id, watch = true, text = ns.ItemName(id) or ("Item " .. id),
+        right = now and (money(now) .. (ch and string.format("  %s%+d %%|r", ch >= 0 and GREEN or RED,
+          math.floor(ch * 100 + 0.5)) or "")) or (MUTED .. "nicht im AH|r"),
+        tip = "Klick: großes Diagramm.\nRechtsklick: nicht mehr beobachten.\nProzent: jetzt zu Median gestern." })
+    end
+  end
   local y = -40
   for i, l in ipairs(lines) do
     local r = row(i)
@@ -148,7 +198,7 @@ local function refresh()
     r:ClearAllPoints()
     r:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, y)
     r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, y)
-    r.itemID, r.tip = l.itemID, l.tip
+    r.itemID, r.tip, r.watch = l.itemID, l.tip, l.watch
     r.left:SetFontObject(l.head and "GameFontNormalSmall" or "GameFontHighlightSmall")
     r.left:SetText(l.head or ((l.itemID and "  " or "") .. (l.text or "")))
     r.right:SetText(l.right or "")
