@@ -2415,11 +2415,16 @@ do
       local from, byHour = today0 - 7 * 86400, {}
       for i = 1, #series.t0 do
         local p, t0, t1 = series.p[i], series.t0[i], series.t1[i]
-        -- hourly slots only (the 2 h slots further back would smear two hours)
-        if p and p > 0 and t0 >= from and t0 < today0 and t1 - t0 <= 3600 then
-          local hr = tonumber(date("%H", t0))
-          byHour[hr] = byHour[hr] or {}
-          table.insert(byHour[hr], p)
+        -- a slot counts for every hour it covers (1 h slots, or 2 h slots where the history
+        -- has no hourly values)
+        if p and p > 0 and t0 >= from and t0 < today0 and t1 - t0 <= 2 * 3600 then
+          local t = t0
+          while t < t1 do
+            local hr = tonumber(date("%H", t))
+            byHour[hr] = byHour[hr] or {}
+            table.insert(byHour[hr], p)
+            t = t + 3600
+          end
         end
       end
       for hr, ps in pairs(byHour) do
