@@ -160,10 +160,47 @@ function Planner.Acquire(recipe, d, src, srcs, way, ctx, patternPrice)
   if option then return { way = option.way, cost = option.cost, option = option } end
 end
 
-local function cooldownRecipe(recipe)
-  -- Transmutations have a cooldown (Forever: 1 hour, Arcanite ~2 days): they cannot be
-  -- crafted dozens of times in a row, so they are no way to raise the skill.
-  return recipe.name and recipe.name:find("^Transmutieren") ~= nil
+-- Recipes with a cooldown of days besides the transmutations (spell ID -> German name).
+Planner.COOLDOWN = {
+  [18560] = "Mondstoff", -- Tailoring, several days
+}
+local cooldownNames = {}
+for _, name in pairs(Planner.COOLDOWN) do cooldownNames[name] = true end
+
+local function cooldownRecipe(recipe, recipeID)
+  -- Transmutations (Forever: 1 hour, Arcanite ~2 days) and Mooncloth (several days) have a
+  -- cooldown: they cannot be crafted dozens of times in a row, so they are no way to raise
+  -- the skill. Planner.Cooldowns lists them as "on the side, whenever it is ready".
+  if recipeID and Planner.COOLDOWN[recipeID] then return true end
+  local name = recipe.name
+  return name ~= nil and (cooldownNames[name] or name:find("^Transmutieren") ~= nil) or false
+end
+
+-- Cooldown recipes that give points somewhere between `from` and `to`: worth crafting
+-- whenever the cooldown is ready, but not part of the way. Only Planner.COOLDOWN: the many
+-- transmutations would crowd the plan (they stay left out of the way, as before).
+-- { id, name, out, learned, learnAt, upTo (grey from) }... sorted by learn level.
+function Planner.Cooldowns(scanRecipes, data, from, to)
+  local list = {}
+  for recipeID, recipe in pairs(scanRecipes or {}) do
+    local d = data[recipeID]
+    if d and (Planner.COOLDOWN[recipeID] or cooldownNames[recipe.name or ""]) and (d[4] or 0) > from
+        and (d[5] or d[1] or 0) < to then
+      table.insert(list, { id = recipeID, name = recipe.name, out = recipe.out, learned = recipe.learned and true or false,
+        learnAt = d[5] or d[1] or 0, upTo = d[4] })
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.learnAt ~= b.learnAt then return a.learnAt < b.learnAt end
+    return a.id < b.id
+  end)
+  return list
+end
+
+-- Text for one cooldown recipe (Planner.Cooldowns), for the planner views.
+function Planner.CooldownText(c)
+  return string.format("%s hat Abklingzeit – herstellen, sobald bereit (%sPunkte bis %d)",
+    c.name or "?", c.learned and "" or ("lernbar ab " .. c.learnAt .. ", "), c.upTo or 0)
 end
 
 -- Builds the list of candidate recipes.
@@ -191,7 +228,7 @@ function Planner.Candidates(scanRecipes, data, buyCost, vendorSell, ahSell, opts
   for recipeID, recipe in pairs(scanRecipes) do
     local d = data[recipeID]
     local special = d and (Planner.SPECIALIZATION[recipeID] or d.spec) and not recipe.learned and not all
-    if d and (recipe.out or recipe.noOutput) and not special and not cooldownRecipe(recipe) then
+    if d and (recipe.out or recipe.noOutput) and not special and not cooldownRecipe(recipe, recipeID) then
       local how
       if all then
         how = Planner.Acquire(recipe, d, srcs and srcs.recipes[recipeID], srcs, "dynamic", opts.ctx, opts.patternPrice)
@@ -305,7 +342,7 @@ function Planner.Missing(scanRecipes, data, srcs, ctx, skill, way, patternPrice)
   if not srcs then return list end
   for recipeID, recipe in pairs(scanRecipes) do
     local d = data[recipeID]
-    if d and (recipe.out or recipe.noOutput) and not recipe.learned and not cooldownRecipe(recipe)
+    if d and (recipe.out or recipe.noOutput) and not recipe.learned and not cooldownRecipe(recipe, recipeID)
         and not (Planner.SPECIALIZATION[recipeID] or d.spec)
         and (d[5] or d[1] or 0) <= skill and (d[4] or 0) > skill then
       local src = srcs.recipes[recipeID]

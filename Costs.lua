@@ -299,8 +299,10 @@ function Costs.Plan(prof, from, to, ahCap, way)
     if not changed then break end
   end
   local srcs = ns.RecipeSources and ns.RecipeSources[prof.pid]
+  local recipes = prof.skill and ns.Planner.SkillRecipes(prof.skill, prof.scan) or prof.scan.recipes
+  -- cooldown recipes (Mooncloth, transmutations): not on the way, a hint "on the side"
+  result.cooldowns = ns.Planner.Cooldowns(recipes, prof.skill and prof.skill.recipes or prof.data, from, to)
   if srcs and result.reached < to then
-    local recipes = prof.skill and ns.Planner.SkillRecipes(prof.skill, prof.scan) or prof.scan.recipes
     result.missing = ns.Planner.Missing(recipes, prof.skill and prof.skill.recipes or prof.data, srcs,
       prof.ctx or Costs.Context(), result.reached, way or "standard", Costs.PatternPrice)
   end

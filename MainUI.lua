@@ -1636,6 +1636,10 @@ PAGES.planner = function(p)
         end
       end
     end
+    -- cooldown recipes (Mooncloth, transmutations): not on the way, crafted on the side
+    for _, cd in ipairs(plan.cooldowns or {}) do
+      table.insert(rows, { span = ORANGE .. "Nebenbei:|r " .. ns.Planner.CooldownText(cd) })
+    end
     if plan.reached < r.to then
       table.insert(rows, { span = string.format("%sDer %s endet bei Skill %d: kein %s Rezept gibt hier noch Punkte.|r",
         ORANGE, way == "standard" and "Standard-Weg" or "dynamische Weg", plan.reached,

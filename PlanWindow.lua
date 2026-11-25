@@ -634,7 +634,14 @@ local function showOverview(v, st)
     end
     if #info == 0 then info[1] = { text = MUTED .. "Keine Rezepte bekannt, die hier noch Punkte geben.|r" } end
   end
-  local anchor, gap = setInfo(v, info and (ORANGE .. string.format("Der Weg endet bei Skill %d – es fehlen Rezepte:", r.reached) .. "|r"), info)
+  local infoTitle = info and (ORANGE .. string.format("Der Weg endet bei Skill %d – es fehlen Rezepte:", r.reached) .. "|r")
+  -- cooldown recipes (Mooncloth, transmutations): not on the way, crafted on the side
+  for _, cd in ipairs(r.cooldowns or {}) do
+    info = info or {}
+    infoTitle = infoTitle or (ORANGE .. "Hinweis:|r")
+    table.insert(info, 1, { text = ORANGE .. "Nebenbei:|r " .. ns.Planner.CooldownText(cd) })
+  end
+  local anchor, gap = setInfo(v, infoTitle, info)
   local ov = overview(st)
   local b = ov.balance
   v.Head:SetText("Material gesamt:")
