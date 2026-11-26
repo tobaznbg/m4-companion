@@ -31,7 +31,7 @@ local function readContainers(ids)
       if info and info.itemID then
         local entry = result[info.itemID]
         if not entry then
-          entry = { n = 0, q = info.quality, bound = info.isBound, noValue = info.hasNoValue }
+          entry = { n = 0, q = info.quality, bound = info.isBound, noValue = info.hasNoValue, loot = info.hasLoot }
           result[info.itemID] = entry
         end
         entry.n = entry.n + (info.stackCount or 1)
@@ -74,6 +74,8 @@ function Inventory.Advise(itemID, entry)
   local ah = (item.now or item.ref) and viaAH and net or nil
   local classID, equipLoc, subclassID = itemClass(itemID)
 
+  -- Openable items (clams, chests, lockboxes): open them yourself, no sale advice.
+  if entry.loot then return "behalten", "selbst öffnen", 0, vendor end
   if entry.q == 0 then return "Händler", "grau", vendor, vendor end
   -- Forever's intercepted crates are filled and turned in for Merchant's Favor.
   if itemID >= 248682 and itemID <= 248713 then return "behalten", "Kiste: füllen für Händlergunst", 0, vendor end

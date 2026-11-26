@@ -54,7 +54,7 @@ local function bagItems()
       if i and i.itemID and not i.isLocked then
         local e = items[i.itemID]
         if not e then
-          e = { itemID = i.itemID, n = 0, q = i.quality, bound = i.isBound,
+          e = { itemID = i.itemID, n = 0, q = i.quality, bound = i.isBound, loot = i.hasLoot,
                 location = ItemLocation:CreateFromBagAndSlot(bag, slot) }
           items[i.itemID] = e
         end

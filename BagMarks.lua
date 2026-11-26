@@ -50,7 +50,7 @@ local function markButton(button)
     m.text:SetTextColor(unpack(COLORS.quest))
     return
   end
-  local entry = { n = info.stackCount or 1, q = info.quality, bound = info.isBound }
+  local entry = { n = info.stackCount or 1, q = info.quality, bound = info.isBound, loot = info.hasLoot }
   local action = ns.Inventory.Advise(info.itemID, entry)
   if action == "AH" then
     m.text:SetText("AH")
