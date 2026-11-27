@@ -665,12 +665,14 @@ local function build(p)
 end
 
 -- Requests -----------------------------------------------------------------------------------
--- Every whisper is a request (decided 27 Nov 2026): a green chat bubble right of the window
--- shows the open ones; a click opens the list beside it with per request "In Arbeit",
+-- Every whisper is a request (decided 27 Nov 2026): a side tab right of the window (like the
+-- profession window's) counts the open ones, its green frame blinks while one is new; a click
+-- opens the list beside it with per request "In Arbeit",
 -- "Erledigt", "Ablehnen" (only the state; nothing is whispered back). Open ones on top, then
 -- the done ones, the declined ones at the bottom under "Abgelehnt". A click on the name
 -- whispers the player. Further whispers of a player with an open request go into it.
--- ns.db.shop.requests = { { from, text, t, status = "neu"/"arbeit"/"erledigt"/"abgelehnt" }… },
+-- ns.db.shop.requests = { { from, text, t, t0 (first whisper), booked (Handelsbuch entry time),
+--   status = "neu"/"arbeit"/"erledigt"/"abgelehnt" }… },
 -- newest first; finished ones older than a day are dropped.
 local MAX_STORED = 30
 local LIST_H = 6 * 78 -- room for the rows in the list (as high as the window)
@@ -693,6 +695,26 @@ local function requests()
   s.requests = keep
   return keep
 end
+
+-- A request set to "Erledigt" gets one "job" entry in the Handelsbuch (Ledger.AddJob; r.booked
+-- holds its time); going back from "Erledigt" takes it out again.
+local function book(r)
+  local L = ns.Ledger
+  if not (L and L.AddJob) then return end
+  if r.status == "erledigt" and not r.booked then
+    r.booked = L.AddJob(r.from, r.text, r.t0, r.t) -- r.t: when it was set "Erledigt"
+  elseif r.status ~= "erledigt" and r.booked then
+    if L.RemoveJob then L.RemoveJob(r.from, r.booked) end
+    r.booked = nil
+  end
+end
+
+-- requests done before the Handelsbuch knew jobs (27 Nov 2026) are booked on login
+ns.OnReady(function()
+  ns.Safe(function()
+    for _, r in ipairs(requests()) do book(r) end
+  end)
+end)
 
 local function openCount()
   local n = 0
@@ -759,6 +781,7 @@ local function requestRow(i)
       if not row.req then return end
       row.req.status = b[1]
       row.req.t = row.req.status == "arbeit" and row.req.t or time()
+      book(row.req)
       refreshRequests()
     end)
     row.buttons[b[1]] = btn
@@ -771,11 +794,15 @@ end
 refreshRequests = function()
   if not bubble then return end
   local list = requests()
-  local open = openCount()
-  bubble:SetShown(#list > 0)
+  local open, fresh = openCount(), 0
+  for _, r in ipairs(list) do if r.status == "neu" then fresh = fresh + 1 end end
   bubble.count:SetText(open > 0 and tostring(open) or "")
-  bubble.icon:SetVertexColor(open > 0 and 0.35 or 0.6, open > 0 and 1 or 0.6, open > 0 and 0.45 or 0.6)
-  if open > 0 then bubble.glow:Play() else bubble.glow:Stop() end
+  -- the green frame blinks while something is new (not yet "in Arbeit")
+  bubble.frame:SetShown(fresh > 0)
+  if fresh > 0 then bubble.glow:Play() else bubble.glow:Stop() end
+  local sel = rawget(bubble, "SelectedTexture")
+  if type(sel) == "table" then sel:SetShown(panel and panel:IsShown() or false) end
+  if bubble.SetChecked then pcall(bubble.SetChecked, bubble, panel and panel:IsShown() or false) end
   if not (panel and panel:IsShown()) then return end
   -- order: open (newest first), then done, then the declined ones under their own heading
   local rank = { neu = 1, arbeit = 1, erledigt = 2, abgelehnt = 3 }
@@ -825,24 +852,44 @@ Shop.RefreshRequests = function() ns.Safe(refreshRequests) end
 
 local function createRequests()
   local f = window.frame
-  -- the bubble: right of the window, under its top edge
-  bubble = CreateFrame("Button", nil, f)
-  bubble:SetSize(40, 40)
-  bubble:SetPoint("TOPLEFT", f, "TOPRIGHT", 2, -60)
-  bubble.icon = bubble:CreateTexture(nil, "ARTWORK")
-  bubble.icon:SetAllPoints()
-  bubble.icon:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
-  bubble:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-  bubble.count = bubble:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
-  bubble.count:SetPoint("BOTTOMRIGHT", -2, 2)
-  -- a slow pulse while requests are open
-  local ag = bubble:CreateAnimationGroup()
+  -- the tab: a side tab right of the window like the profession window's (Blizzard's
+  -- LargeSideTabButtonTemplate), always there; a green frame blinks on it while something is new
+  local tab
+  for _, kind in ipairs({ "CheckButton", "Button" }) do
+    local ok, t = pcall(CreateFrame, kind, nil, f, "LargeSideTabButtonTemplate")
+    if ok and t then tab = t break end
+  end
+  if not tab then
+    tab = CreateFrame("Button", nil, f)
+    tab:SetSize(44, 44)
+    local icon = tab:CreateTexture(nil, "ARTWORK")
+    icon:SetAllPoints()
+    tab.Icon = icon
+    tab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+  end
+  bubble = tab
+  tab:ClearAllPoints()
+  tab:SetPoint("TOPLEFT", f, "TOPRIGHT", -2, -40)
+  local icon = rawget(tab, "Icon")
+  if type(icon) == "table" then icon:SetTexture("Interface\\Icons\\INV_Letter_15") end
+  tab.count = tab:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+  tab.count:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", -4, 4)
+  -- the green frame (the action button's glow border, green), pulsing
+  local frame = tab:CreateTexture(nil, "OVERLAY")
+  frame:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+  frame:SetBlendMode("ADD")
+  frame:SetVertexColor(0.2, 1, 0.35)
+  frame:SetPoint("CENTER", type(icon) == "table" and icon or tab, "CENTER", 0, 0)
+  frame:SetSize(78, 78)
+  frame:Hide()
+  tab.frame = frame
+  local ag = frame:CreateAnimationGroup()
   ag:SetLooping("BOUNCE")
   local a = ag:CreateAnimation("Alpha")
   a:SetFromAlpha(1)
-  a:SetToAlpha(0.45)
-  a:SetDuration(0.8)
-  bubble.glow = ag
+  a:SetToAlpha(0.15)
+  a:SetDuration(0.6)
+  tab.glow = ag
   bubble:SetScript("OnEnter", function(b)
     GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
     GameTooltip:SetText("Anfragen")
@@ -854,14 +901,14 @@ local function createRequests()
     panel:SetShown(not panel:IsShown())
     refreshRequests()
   end)
-  bubble:Hide()
+  bubble:Show()
 
   -- the list beside the window
   local ok, p = pcall(CreateFrame, "Frame", nil, f, "BasicFrameTemplateWithInset")
   if not ok then p = CreateFrame("Frame", nil, f) end
   panel = p
   p:SetSize(300, 58 + LIST_H)
-  p:SetPoint("TOPLEFT", bubble, "TOPRIGHT", 4, 20)
+  p:SetPoint("TOPLEFT", f, "TOPRIGHT", 48, -10) -- right of the tab
   p:SetFrameStrata(f:GetFrameStrata())
   if not ok then
     local bg = p:CreateTexture(nil, "BACKGROUND")
@@ -916,7 +963,7 @@ ns.On("CHAT_MSG_WHISPER", function(_, text, sender)
       return
     end
   end
-  table.insert(list, 1, { from = sender, text = text or "", t = time(), status = "neu" })
+  table.insert(list, 1, { from = sender, text = text or "", t = time(), t0 = time(), status = "neu" })
   while #list > MAX_STORED do table.remove(list) end
   Shop.RefreshRequests()
 end)

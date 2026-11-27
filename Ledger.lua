@@ -19,6 +19,7 @@
 --   t time, k kind, i itemID (nil if only the name is known), n item name,
 --   u units, c copper (buy: paid, sale: price before cut), cut, p unit price (post), d duration,
 --   dep deposit paid for the post (copper, all units; nil when the client could not tell)
+--   job        a whisper request done (Marktschreier): with, text, from (see "Jobs" below)
 --   craft only: prof profession name, pid profession id, rid recipe (spell) id, x casts,
 --   r reagents used { { i, n }... }, src "cast" or "loot" (how it was detected)
 local ADDON, ns = ...
@@ -538,7 +539,7 @@ end
 function Ledger.Summary()
   local items, total = {}, { bought = 0, spent = 0, sold = 0, net = 0, ownNet = 0, profit = 0, held = 0 }
   for _, e in ipairs(book().events) do
-    if e.k ~= "craft" then summarize(items, e) end
+    if e.k ~= "craft" and e.k ~= "job" then summarize(items, e) end
   end
   local list = {}
   for _, it in pairs(items) do
@@ -716,6 +717,45 @@ if ns.On then
     local s = trade
     if C_Timer then C_Timer.After(2, function() if trade == s then trade = nil end end) end
   end)
+end
+
+-- Jobs ----------------------------------------------------------------------------------------
+-- A whisper request of the Marktschreier (Shop.lua) set to "Erledigt": one "job" entry with the
+-- player (with, short name), what was asked (text) and since when (from: the first whisper).
+-- No money of its own: the ledger shows the trades with that player around it (Ledger.JobGold).
+-- Returns the entry's time (the request keeps it, so "erledigt" books it once).
+function Ledger.AddJob(from, text, since, at)
+  local with = (Ambiguate and Ambiguate(from or "?", "short")) or from or "?"
+  local e = { k = "job", t = at, with = with, text = text, from = since, n = "Auftrag: " .. with }
+  add(e)
+  return e.t
+end
+
+-- Takes a job entry out again (the request went back from "Erledigt").
+function Ledger.RemoveJob(from, t)
+  local with = (Ambiguate and Ambiguate(from or "?", "short")) or from or "?"
+  local events = book().events
+  for i = #events, 1, -1 do
+    local e = events[i]
+    if e.k == "job" and e.t == t and e.with == with then
+      table.remove(events, i)
+      if ns.PlannerUI and ns.PlannerUI.Refresh then ns.Safe(ns.PlannerUI.Refresh) end
+      return true
+    end
+  end
+end
+
+-- Net gold of the trades with the job's player from its first whisper (else 6 h before) up to an
+-- hour after it was done: received minus given, nil without any such trade.
+function Ledger.JobGold(job)
+  local from, to = job.from or ((job.t or 0) - 6 * 3600), (job.t or 0) + 3600
+  local net, any = 0, false
+  for _, e in ipairs(Ledger.HouseholdEvents()) do
+    if e.k == "trade" and e.with == job.with and (e.t or 0) >= from and (e.t or 0) <= to then
+      net, any = net + (e.gr or 0) - (e.gg or 0), true
+    end
+  end
+  return any and net or nil
 end
 
 -- All events of this character, oldest first (read only; Profit.lua replays them).

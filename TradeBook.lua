@@ -219,7 +219,7 @@ end
 local function auctionRows() return TradeBook.AuctionRows() end
 
 local KINDS = { buy = "Kauf", sale = "Verkauf", vendor = "Händler", post = "Eingestellt", expired = "Abgelaufen",
-  cancelled = "Abgebrochen", craft = "Hergestellt", trade = "Handel" }
+  cancelled = "Abgebrochen", craft = "Hergestellt", trade = "Handel", job = "Auftrag" }
 
 -- The last 20 trades (all of them: the "Handelsbuch" tab).
 local function tradeRows()
@@ -253,11 +253,20 @@ local function tradeRows()
       local net = (e.gr or 0) - (e.gg or 0)
       amount = net > 0 and (GREEN .. "+" .. money(net) .. "|r") or (net < 0 and (RED .. "-" .. money(-net) .. "|r") or (MUTED .. "Tausch|r"))
       units = MUTED .. "–|r"
+    elseif e.k == "job" then
+      -- a whisper request done (Marktschreier): who, what was asked; the gold of the trades
+      -- with that player around it as the amount
+      name = "Auftrag von " .. (e.with or "?") .. ((e.text or "") ~= "" and (MUTED .. "  " .. e.text .. "|r") or "")
+      local net = L.JobGold and L.JobGold(e)
+      amount = net and (net > 0 and (GREEN .. "+" .. money(net) .. "|r") or (net < 0 and (RED .. "-" .. money(-net) .. "|r")
+        or (MUTED .. "Tausch|r"))) or (MUTED .. "erledigt|r")
+      units = MUTED .. "–|r"
     elseif e.src == "trade" and e.with then
       name = name .. MUTED .. "  · Handel mit " .. e.with .. "|r"
     end
     local whoText = (many and x.who and x.who ~= me) and (MUTED .. "  · " .. (x.who:match("^([^-]+)") or x.who) .. "|r") or ""
-    out[#out + 1] = { itemID = e.i, icon = e.k == "trade" and "Interface\\Icons\\INV_Misc_Coin_01" or iconOf(e.i),
+    out[#out + 1] = { itemID = e.i, icon = e.k == "trade" and "Interface\\Icons\\INV_Misc_Coin_01"
+      or e.k == "job" and "Interface\\Icons\\INV_Letter_15" or iconOf(e.i),
       name .. whoText,
       MUTED .. date("%d.%m. %H:%M", e.t or 0) .. "|r  " .. (KINDS[e.k] or tostring(e.k)),
       units, amount }
