@@ -54,6 +54,7 @@ Trends.lua
 Crafting.lua
 SourceLog.lua
 ShoppingList.lua
+Shop.lua
 DayTrade.lua
 DayTradeOverlay.lua
 PlanWindow.lua

@@ -109,6 +109,8 @@ function Recipes.Scan()
       scan.recipes[recipeID] = {
         name = info.name,
         learned = info.learned,
+        fav = info.favorite or nil, -- the star in the profession window (Shop.lua)
+        icon = info.icon, -- the recipe's icon (enchantments have no product to show)
         diff = info.relativeDifficulty,
         ups = info.numSkillUps,
         cat = info.categoryID,

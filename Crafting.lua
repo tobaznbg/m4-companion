@@ -533,7 +533,8 @@ function ns.RecipeFromSchematic(recipeID)
   local api = C_TradeSkillUI
   if not (recipeID and api and api.GetRecipeSchematic) then return nil end
   local ok, s = pcall(api.GetRecipeSchematic, recipeID, false)
-  if not ok or type(s) ~= "table" or not s.outputItemID then return nil end
+  -- enchantments have no output item: their reagents still count (out = nil)
+  if not ok or type(s) ~= "table" then return nil end
   local r = {}
   for _, slot in ipairs(s.reagentSlotSchematics or {}) do
     local reagent = slot.reagents and slot.reagents[1]
@@ -551,17 +552,21 @@ function ns.RecipeEconomics(recipeID)
     if key:sub(1, #prefix) == prefix and scan.recipes and scan.recipes[recipeID] then r = scan.recipes[recipeID] end
   end
   -- not in the own scans (another player's window): the game's schematic
-  if not (r and r.out) then r = ns.RecipeFromSchematic(recipeID) end
-  if not (r and r.out) then return nil end
-  local cost, reagents = 0, {}
+  if not (r and (r.out or #(r.r or {}) > 0)) then r = ns.RecipeFromSchematic(recipeID) end
+  if not (r and (r.out or #(r.r or {}) > 0)) then return nil end
+  -- every reagent gets its price, also after one without a price
+  local cost, reagents, noPrice = 0, {}, 0
   for _, g in ipairs(r.r or {}) do
     if g.i then
       local unit, vendor = ns.Item.BuyCost(ns.Item(g.i))
       reagents[g.i] = { unit = unit, vendor = vendor, n = g.n or 1 }
-      if not unit then return { reagents = reagents, out = r.out } end
-      cost = cost + unit * (g.n or 1)
+      if unit then cost = cost + unit * (g.n or 1) else noPrice = noPrice + 1 end
     end
   end
+  -- some reagents without a price: what the priced ones cost (partial) and how many lack one
+  if noPrice > 0 then return { reagents = reagents, out = r.out, partial = cost, noPrice = noPrice } end
+  -- no product (enchantments): the material cost only
+  if not r.out then return { cost = cost, reagents = reagents } end
   local qty = ((r.qmin or 1) + (r.qmax or r.qmin or 1)) / 2
   local unitValue, onAH = ns.Item.SellNet(ns.Item(r.out))
   local value = unitValue * qty
@@ -1936,6 +1941,8 @@ function Products.SyncTab()
   set(Products.planTab, plan and plan:IsShown())
   set(Products.ownPlanTab, plan and plan:IsShown())
   set(Products.ownShopTab, shop and shop:IsShown())
+  local store = ns.Shop and ns.Shop.Frame and ns.Shop.Frame()
+  set(Products.storeTab, store and store:IsShown())
 end
 
 -- "Planer" leftmost under the profession window, only for crafting professions (PlanWindow.lua);
@@ -2103,7 +2110,7 @@ local function updateForm(form)
   -- Summary: three rows like Blizzard's (gold label left, value right in the price column).
   if not form.m4Rows then
     form.m4Rows = {}
-    for i, text in ipairs({ "Herstellkosten", "Erlös", "Gewinn" }) do
+    for i, text in ipairs({ "Materialkosten gesamt", "Erlös", "Gewinn" }) do
       local l = form:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
       l:SetText(text)
       local v = form:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -2111,11 +2118,17 @@ local function updateForm(form)
       form.m4Rows[i] = { label = l, value = v }
     end
   end
+  -- values[i] of the rows; rows without a value (no product, no full price) stay hidden
   local values
   if e and e.cost and e.value then
     local p = e.profit
     values = { fmt(e.cost), fmt(e.value) .. (e.onAH and "" or "|cff999999  H|r"),
       p >= 0 and ("|cff5fd38d+" .. fmt(p) .. "|r") or ("|cffff6b6b-" .. fmt(-p) .. "|r") }
+  elseif e and e.cost then
+    values = { fmt(e.cost) } -- enchantments: no product, the material only
+  elseif e and e.noPrice then
+    values = { (e.partial > 0 and (fmt(e.partial) .. " ") or "")
+      .. string.format("|cffff6b6b+ %d ohne Preis|r", e.noPrice) }
   end
   -- a thin line between revenue and profit
   if not form.m4Line then
@@ -2137,12 +2150,12 @@ local function updateForm(form)
       form.m4Line:SetPoint("BOTTOMLEFT", row.label, "TOPLEFT", 0, 3)
       local lx, fr = row.label:GetLeft(), form:GetRight()
       form.m4Line:SetWidth(lx and fr and math.max(1, fr - RIGHT_EDGE - lx) or 200)
-      form.m4Line:SetShown(values ~= nil)
+      form.m4Line:SetShown(values ~= nil and values[3] ~= nil)
     end
     local _, fy = form:GetCenter()
     local _, ly = row.label:GetCenter()
     if fy and ly then row.value:SetPoint("RIGHT", form, "RIGHT", -RIGHT_EDGE, ly - fy) end
-    row.label:SetShown(values ~= nil)
+    row.label:SetShown(values ~= nil and values[i] ~= nil)
     row.value:SetText(values and values[i] or "")
   end
   -- "Einkaufsliste" under the profit: the recipe with the count of Blizzard's number box onto
@@ -2261,6 +2274,15 @@ local function attachProfessions()
       shop:SetPoint("LEFT", tab, "RIGHT", 4, 0)
       shop:SetScript("OnClick", function() if ns.ShoppingList then ns.Safe(ns.ShoppingList.Toggle) end end)
       Products.shopTab = shop
+      -- "Marktschreier" after it (Shop.lua): shop prices of the favourites and the chat advert
+      local okL, store = pcall(CreateFrame, "Button", "M4CompanionStoreTab", pf, "PanelTabButtonTemplate")
+      if okL and store then
+        store:SetText("Marktschreier")
+        if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, store, 0) end
+        store:SetPoint("LEFT", shop, "RIGHT", 4, 0)
+        store:SetScript("OnClick", function() if ns.Shop then ns.Safe(ns.Shop.Toggle) end end)
+        Products.storeTab = store
+      end
     end
     Products.UpdateTabs()
   end

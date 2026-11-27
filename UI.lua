@@ -272,6 +272,9 @@ SlashCmdList.M4COMPANION = function(msg)
     if ns.ToggleLiveStrip then ns.Safe(ns.ToggleLiveStrip) end
   elseif msg == "quellen" then
     if ns.SourceLog then ns.Safe(ns.SourceLog.Summary) end
+  elseif msg == "marktschreier" or msg == "laden" then
+    -- /m4 marktschreier: shop prices of the favourite recipes and the chat advert (Shop.lua)
+    if ns.Shop then ns.Safe(ns.Shop.Toggle) end
   elseif msg == "liste" then
     if ns.ShoppingList then ns.Safe(ns.ShoppingList.Toggle) end
   elseif msg == "berufe" or msg == "b" then
