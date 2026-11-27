@@ -475,29 +475,60 @@ Shop.Refresh = refresh
 local function build(p)
   page = p
   rows = {}
-  local head = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  head:SetPoint("TOPLEFT", 14, -4)
+  -- the head centered in the window's grey band above the page (the page starts under it):
+  -- the title, the help behind an "i" (tooltip)
+  local head = p:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  head:SetPoint("CENTER", p, "TOP", -12, 20)
   head:SetText("Ladenpreise deiner Favoriten")
-  local sub = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  sub:SetPoint("TOPLEFT", head, "BOTTOMLEFT", 0, -3)
-  sub:SetText("Favoriten = Stern im Berufsfenster. Angebot: meine Mats oder Taschengeld (Kunde bringt die Mats). Preis in Gold und Silber.")
+  local help = CreateFrame("Button", nil, p)
+  help:SetSize(18, 18)
+  help:SetPoint("LEFT", head, "RIGHT", 6, 0)
+  local helpIcon = help:CreateTexture(nil, "ARTWORK")
+  helpIcon:SetAllPoints()
+  helpIcon:SetTexture("Interface\\FriendsFrame\\InformationIcon")
+  help:SetScript("OnEnter", function(b)
+    GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Ladenpreise")
+    GameTooltip:AddLine("Favoriten: der Stern beim Rezept im Berufsfenster.", 1, 1, 1, true)
+    GameTooltip:AddLine("Angebot: meine Mats (Preis inkl. Material) oder Taschengeld (der Kunde bringt die Mats).", 1, 1, 1, true)
+    GameTooltip:AddLine("Verkaufsname: steht im Chat statt des Rezeptnamens.", 1, 1, 1, true)
+    GameTooltip:AddLine("Preis in Gold und Silber.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  help:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-  -- column heads (right edges as in the rows)
+  -- the column heads: a dark table head bar over the list
+  local bar = CreateFrame("Frame", nil, p)
+  bar:SetPoint("TOPLEFT", 8, -6)
+  bar:SetPoint("TOPRIGHT", -8, -6)
+  bar:SetHeight(20)
+  local barBg = bar:CreateTexture(nil, "BACKGROUND")
+  barBg:SetAllPoints()
+  barBg:SetColorTexture(0, 0, 0, 0.4)
+  local barLine = bar:CreateTexture(nil, "ARTWORK")
+  barLine:SetColorTexture(1, 0.82, 0, 0.3)
+  barLine:SetHeight(1)
+  barLine:SetPoint("BOTTOMLEFT")
+  barLine:SetPoint("BOTTOMRIGHT")
+
+  -- the list under it
   local list = CreateFrame("Frame", nil, p)
-  list:SetPoint("TOPLEFT", 8, -56)
-  list:SetPoint("TOPRIGHT", -8, -56)
-  list:SetHeight(270)
-  local function colHead(text, right)
-    local fs = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    fs:SetPoint("BOTTOMRIGHT", list, "TOPRIGHT", right, 4)
+  list:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -2)
+  list:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -2)
+  list:SetHeight(236) -- five recipes
+  -- column heads over their fields (bar x = row x - 26 for the scroll bar): Material right-
+  -- aligned like its amounts, Angebot and Preis centered over the switch and the coin boxes
+  local function colHead(text, point, x)
+    local fs = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fs:SetPoint(point, bar, "RIGHT", x, 0)
     fs:SetText(text)
   end
-  local nameHead = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  nameHead:SetPoint("BOTTOMLEFT", list, "TOPLEFT", 46, 4)
+  local nameHead = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  nameHead:SetPoint("LEFT", bar, "LEFT", 46, 0)
   nameHead:SetText("Rezept")
-  colHead("Material", -296)
-  colHead("Angebot", -206)
-  colHead("Preis", -86)
+  colHead("Material", "RIGHT", -296)
+  colHead("Angebot", "CENTER", -228)
+  colHead("Preis", "CENTER", -98)
 
   local ok, scroll = pcall(CreateFrame, "ScrollFrame", nil, list, "UIPanelScrollFrameTemplate")
   if not ok then scroll = CreateFrame("ScrollFrame", nil, list) end
@@ -633,13 +664,274 @@ local function build(p)
   send:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
+-- Requests -----------------------------------------------------------------------------------
+-- Every whisper is a request (decided 27 Nov 2026): a green chat bubble right of the window
+-- shows the open ones; a click opens the list beside it with per request "In Arbeit",
+-- "Erledigt", "Ablehnen" (only the state; nothing is whispered back). Open ones on top, then
+-- the done ones, the declined ones at the bottom under "Abgelehnt". A click on the name
+-- whispers the player. Further whispers of a player with an open request go into it.
+-- ns.db.shop.requests = { { from, text, t, status = "neu"/"arbeit"/"erledigt"/"abgelehnt" }… },
+-- newest first; finished ones older than a day are dropped.
+local MAX_STORED = 30
+local LIST_H = 6 * 78 -- room for the rows in the list (as high as the window)
+local STATUS = {
+  neu = { "neu", "|cff5fd38d" },
+  arbeit = { "in Arbeit", "|cffffd100" },
+  erledigt = { "erledigt", MUTED },
+  abgelehnt = { "abgelehnt", MUTED },
+}
+local bubble, panel
+
+local function requests()
+  local s = db()
+  s.requests = s.requests or {}
+  local keep = {}
+  for _, r in ipairs(s.requests) do
+    local done = r.status == "erledigt" or r.status == "abgelehnt"
+    if not (done and time() - (r.t or 0) > 86400) then keep[#keep + 1] = r end
+  end
+  s.requests = keep
+  return keep
+end
+
+local function openCount()
+  local n = 0
+  for _, r in ipairs(requests()) do
+    if r.status == "neu" or r.status == "arbeit" then n = n + 1 end
+  end
+  return n
+end
+
+local function ago(t)
+  local s = math.max(0, time() - (t or 0))
+  if s < 60 then return "gerade" end
+  if s < 3600 then return string.format("vor %d min", math.floor(s / 60)) end
+  return string.format("vor %d h", math.floor(s / 3600))
+end
+
+local refreshRequests
+
+local function requestRow(i)
+  panel.rows = panel.rows or {}
+  local row = panel.rows[i]
+  if row then return row end
+  row = CreateFrame("Frame", nil, panel) -- placed by refreshRequests
+  row:SetHeight(74)
+  local bg = row:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints()
+  bg:SetColorTexture(1, 1, 1, 0.05)
+  -- the name: a click whispers the player
+  row.name = CreateFrame("Button", nil, row)
+  row.name:SetPoint("TOPLEFT", 6, -4)
+  row.name:SetSize(150, 16)
+  row.nameText = row.name:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.nameText:SetAllPoints()
+  row.nameText:SetJustifyH("LEFT")
+  row.name:SetScript("OnClick", function()
+    if row.req and ChatFrame_SendTell then ChatFrame_SendTell(row.req.from) end
+  end)
+  row.name:SetScript("OnEnter", function(b)
+    GameTooltip:SetOwner(b, "ANCHOR_TOP")
+    GameTooltip:SetText("Anflüstern")
+    GameTooltip:Show()
+  end)
+  row.name:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  row.state = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  row.state:SetPoint("TOPRIGHT", -6, -6)
+  row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  row.text:SetPoint("TOPLEFT", 6, -22)
+  row.text:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+  row.text:SetJustifyH("LEFT")
+  row.text:SetJustifyV("TOP")
+  row.text:SetHeight(26)
+  row.text:SetWordWrap(true)
+  if row.text.SetMaxLines then row.text:SetMaxLines(2) end
+  row.buttons = {}
+  local x = 0
+  for _, b in ipairs({ { "arbeit", "In Arbeit", 80 }, { "erledigt", "Erledigt", 72 }, { "abgelehnt", "Ablehnen", 76 } }) do
+    local ok, btn = pcall(CreateFrame, "Button", nil, row, "UIPanelButtonTemplate")
+    if not ok then btn = CreateFrame("Button", nil, row) end
+    btn:SetSize(b[3], 18)
+    btn:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6 + x, 4)
+    if GameFontHighlightSmall then btn:SetNormalFontObject(GameFontHighlightSmall) end
+    btn:SetText(b[2])
+    btn:SetScript("OnClick", function()
+      if not row.req then return end
+      row.req.status = b[1]
+      row.req.t = row.req.status == "arbeit" and row.req.t or time()
+      refreshRequests()
+    end)
+    row.buttons[b[1]] = btn
+    x = x + b[3] + 4
+  end
+  panel.rows[i] = row
+  return row
+end
+
+refreshRequests = function()
+  if not bubble then return end
+  local list = requests()
+  local open = openCount()
+  bubble:SetShown(#list > 0)
+  bubble.count:SetText(open > 0 and tostring(open) or "")
+  bubble.icon:SetVertexColor(open > 0 and 0.35 or 0.6, open > 0 and 1 or 0.6, open > 0 and 0.45 or 0.6)
+  if open > 0 then bubble.glow:Play() else bubble.glow:Stop() end
+  if not (panel and panel:IsShown()) then return end
+  -- order: open (newest first), then done, then the declined ones under their own heading
+  local rank = { neu = 1, arbeit = 1, erledigt = 2, abgelehnt = 3 }
+  local sorted = {}
+  for _, r in ipairs(list) do sorted[#sorted + 1] = r end
+  table.sort(sorted, function(a, b)
+    local ra, rb = rank[a.status] or 1, rank[b.status] or 1
+    if ra ~= rb then return ra < rb end
+    return (a.t or 0) > (b.t or 0)
+  end)
+  local y, used, headShown = panel.rowsTop or -48, 0, false
+  local bottom = (panel.rowsTop or -48) - LIST_H
+  for _, req in ipairs(sorted) do
+    if req.status == "abgelehnt" and not headShown then
+      if y - 22 - 74 < bottom then break end
+      panel.declinedHead:ClearAllPoints()
+      panel.declinedHead:SetPoint("TOPLEFT", panel, "TOPLEFT", 14, y - 4)
+      panel.declinedHead:Show()
+      headShown = true
+      y = y - 22
+    end
+    if y - 74 < bottom then break end
+    used = used + 1
+    local row = requestRow(used)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", panel, "TOPLEFT", 10, y)
+    row:SetPoint("RIGHT", panel, "RIGHT", -10, 0)
+    row.req = req
+    local st = STATUS[req.status] or STATUS.neu
+    local done = req.status == "erledigt" or req.status == "abgelehnt"
+    row.nameText:SetText((done and MUTED or "") .. (Ambiguate and Ambiguate(req.from, "short") or req.from)
+      .. (done and "|r" or ""))
+    row.state:SetText(st[2] .. st[1] .. "|r  " .. MUTED .. ago(req.t) .. "|r")
+    row.text:SetText((done and MUTED or "") .. (req.text or "") .. (done and "|r" or ""))
+    for key, btn in pairs(row.buttons) do btn:SetEnabled(req.status ~= key) end
+    row:Show()
+    y = y - 78
+  end
+  if not headShown then panel.declinedHead:Hide() end
+  for i = used + 1, #(panel.rows or {}) do
+    panel.rows[i].req = nil
+    panel.rows[i]:Hide()
+  end
+  panel.empty:SetShown(#list == 0)
+end
+Shop.RefreshRequests = function() ns.Safe(refreshRequests) end
+
+local function createRequests()
+  local f = window.frame
+  -- the bubble: right of the window, under its top edge
+  bubble = CreateFrame("Button", nil, f)
+  bubble:SetSize(40, 40)
+  bubble:SetPoint("TOPLEFT", f, "TOPRIGHT", 2, -60)
+  bubble.icon = bubble:CreateTexture(nil, "ARTWORK")
+  bubble.icon:SetAllPoints()
+  bubble.icon:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
+  bubble:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+  bubble.count = bubble:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+  bubble.count:SetPoint("BOTTOMRIGHT", -2, 2)
+  -- a slow pulse while requests are open
+  local ag = bubble:CreateAnimationGroup()
+  ag:SetLooping("BOUNCE")
+  local a = ag:CreateAnimation("Alpha")
+  a:SetFromAlpha(1)
+  a:SetToAlpha(0.45)
+  a:SetDuration(0.8)
+  bubble.glow = ag
+  bubble:SetScript("OnEnter", function(b)
+    GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Anfragen")
+    GameTooltip:AddLine(string.format("%d offen – Klick zeigt die Whispers.", openCount()), 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  bubble:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  bubble:SetScript("OnClick", function()
+    panel:SetShown(not panel:IsShown())
+    refreshRequests()
+  end)
+  bubble:Hide()
+
+  -- the list beside the window
+  local ok, p = pcall(CreateFrame, "Frame", nil, f, "BasicFrameTemplateWithInset")
+  if not ok then p = CreateFrame("Frame", nil, f) end
+  panel = p
+  p:SetSize(300, 58 + LIST_H)
+  p:SetPoint("TOPLEFT", bubble, "TOPRIGHT", 4, 20)
+  p:SetFrameStrata(f:GetFrameStrata())
+  if not ok then
+    local bg = p:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.05, 0.05, 0.05, 0.92)
+  end
+  local title = rawget(p, "TitleText") or p:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  if not rawget(p, "TitleText") then title:SetPoint("TOP", 0, -6) end
+  title:SetText("Anfragen")
+  p.empty = p:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+  p.empty:SetPoint("TOP", 0, -60)
+  p.empty:SetText("Keine Anfragen")
+  p.declinedHead = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  p.declinedHead:SetText("Abgelehnt")
+  p.declinedHead:Hide()
+  -- finished ones away
+  local okC, clear = pcall(CreateFrame, "Button", nil, p, "UIPanelButtonTemplate")
+  if not okC then clear = CreateFrame("Button", nil, p) end
+  clear:SetSize(90, 18)
+  clear:SetPoint("TOPLEFT", 8, -26)
+  clear:SetText("Aufräumen")
+  if GameFontHighlightSmall then clear:SetNormalFontObject(GameFontHighlightSmall) end
+  clear:SetScript("OnClick", function()
+    local keep = {}
+    for _, r in ipairs(requests()) do
+      if r.status == "neu" or r.status == "arbeit" then keep[#keep + 1] = r end
+    end
+    db().requests = keep
+    refreshRequests()
+  end)
+  clear:SetScript("OnEnter", function(b)
+    GameTooltip:SetOwner(b, "ANCHOR_TOP")
+    GameTooltip:SetText("Erledigte und abgelehnte entfernen")
+    GameTooltip:Show()
+  end)
+  clear:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  -- the rows start under the clear button
+  p.rowsTop = -48
+  p:Hide()
+  refreshRequests()
+end
+
+-- Every whisper is a request (or more text of an open one of that player).
+ns.On("CHAT_MSG_WHISPER", function(_, text, sender)
+  if not sender then return end
+  local list = requests()
+  for _, r in ipairs(list) do
+    if r.from == sender and (r.status == "neu" or r.status == "arbeit") then
+      r.text = (r.text or "") .. " · " .. (text or "")
+      r.t = time()
+      Shop.RefreshRequests()
+      return
+    end
+  end
+  table.insert(list, 1, { from = sender, text = text or "", t = time(), status = "neu" })
+  while #list > MAX_STORED do table.remove(list) end
+  Shop.RefreshRequests()
+end)
+
 local function create()
   local NW = ns.NativeWindow
   window = NW.New({ name = "M4CompanionShop", title = "Marktschreier", icon = Shop.ICON, width = 760 })
-  window:AddTab({ key = "shop", title = "Marktschreier", hidden = true, build = build, onShow = function() refresh(true) end })
+  window:AddTab({ key = "shop", title = "Marktschreier", hidden = true, build = build, onShow = function()
+    refresh(true)
+    Shop.RefreshRequests() -- the "vor x min" of the requests
+  end })
   local function sync() if ns.Products and ns.Products.SyncTab then ns.Products.SyncTab() end end
   window.frame:HookScript("OnShow", sync)
   window.frame:HookScript("OnHide", sync)
+  ns.Safe(createRequests)
 end
 
 function Shop.Show()
